@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Greenhouse
+GenericName=Torrent Client
+Comment=Download torrents, with bulk tracker management
+Exec=greenhouse %u
+Icon=greenhouse
+Terminal=false
+Categories=Network;FileTransfer;P2P;
+MimeType=x-scheme-handler/magnet;application/x-bittorrent;
+Keywords=torrent;bittorrent;magnet;p2p;download;
+StartupNotify=true
+StartupWMClass=Greenhouse

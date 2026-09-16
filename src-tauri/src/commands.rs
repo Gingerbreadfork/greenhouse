@@ -1,0 +1,891 @@
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use bytes::Bytes;
+use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, Session};
+use parking_lot::{Mutex, RwLock};
+use serde::{Deserialize, Serialize};
+
+use crate::engine::{self, SessionSummary, TorrentDetail, TorrentRow};
+use crate::settings::{self, Paths, Settings};
+use crate::torrentsrc;
+
+pub struct AppState {
+    pub session: Arc<Session>,
+    pub api: Api,
+    pub settings: RwLock<Settings>,
+    pub paths: Paths,
+    pub staged: Mutex<HashMap<String, Staged>>,
+    pub http: reqwest::Client,
+}
+
+#[derive(Clone)]
+pub struct Staged {
+    pub kind: String,
+    pub source: String,
+    pub bytes: Option<Bytes>,
+    pub info_hash: Option<String>,
+    pub name: Option<String>,
+    pub total_bytes: u64,
+    pub trackers: Vec<String>,
+    pub files: Vec<StagedFile>,
+    pub skipped: Vec<usize>,
+    pub resolved: bool,
+}
+
+#[derive(Clone, Serialize)]
+pub struct StagedFile {
+    pub index: usize,
+    pub name: String,
+    pub components: Vec<String>,
+    pub length: u64,
+}
+
+#[derive(Serialize)]
+pub struct StagedInfo {
+    pub token: String,
+    pub kind: String,
+    pub source: String,
+    pub info_hash: Option<String>,
+    pub name: Option<String>,
+    pub total_bytes: u64,
+    pub trackers: Vec<String>,
+    pub files: Vec<StagedFile>,
+    /// File indices left unticked because of their extension.
+    pub skipped: Vec<usize>,
+    pub resolved: bool,
+    pub needs_resolve: bool,
+}
+
+impl StagedInfo {
+    fn from(token: String, s: &Staged) -> Self {
+        Self {
+            token,
+            kind: s.kind.clone(),
+            source: s.source.clone(),
+            info_hash: s.info_hash.clone(),
+            name: s.name.clone(),
+            total_bytes: s.total_bytes,
+            trackers: s.trackers.clone(),
+            files: s.files.clone(),
+            skipped: s.skipped.clone(),
+            resolved: s.resolved,
+            needs_resolve: !s.resolved,
+        }
+    }
+}
+
+type CmdResult<T> = Result<T, String>;
+
+fn err<E: std::fmt::Display>(e: E) -> String {
+    e.to_string()
+}
+
+#[derive(Serialize)]
+pub struct Bootstrap {
+    pub settings: Settings,
+    pub version: String,
+    pub default_download_dir: String,
+    pub home_dir: String,
+}
+
+#[tauri::command]
+pub fn bootstrap(state: tauri::State<'_, AppState>) -> Bootstrap {
+    Bootstrap {
+        settings: state.settings.read().clone(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        default_download_dir: settings::default_download_dir(),
+        home_dir: dirs::home_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+    }
+}
+
+#[tauri::command]
+pub fn save_settings(state: tauri::State<'_, AppState>, next: Settings) -> CmdResult<Settings> {
+    state
+        .session
+        .ratelimits
+        .set_download_bps(engine::kbps_to_bps(next.download_limit_kbps));
+    state
+        .session
+        .ratelimits
+        .set_upload_bps(engine::kbps_to_bps(next.upload_limit_kbps));
+    settings::save(&state.paths.settings_file(), &next).map_err(err)?;
+    *state.settings.write() = next.clone();
+    Ok(next)
+}
+
+#[tauri::command]
+pub fn list_torrents(state: tauri::State<'_, AppState>) -> Vec<TorrentRow> {
+    engine::collect_rows(&state.session)
+}
+
+#[tauri::command]
+pub fn session_stats(state: tauri::State<'_, AppState>) -> SessionSummary {
+    engine::session_summary(&state.session, &state.settings.read())
+}
+
+#[tauri::command]
+pub fn torrent_detail(state: tauri::State<'_, AppState>, id: usize) -> CmdResult<TorrentDetail> {
+    engine::torrent_detail(&state.api, &state.paths, id).map_err(err)
+}
+
+#[tauri::command]
+pub async fn torrent_action(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    action: String,
+) -> CmdResult<()> {
+    match action.as_str() {
+        "pause" => state.api.api_torrent_action_pause(id.into()).await.map(|_| ()),
+        "start" => state.api.api_torrent_action_start(id.into()).await.map(|_| ()),
+        "forget" => state.api.api_torrent_action_forget(id.into()).await.map(|_| ()),
+        "delete" => state.api.api_torrent_action_delete(id.into()).await.map(|_| ()),
+        other => return Err(format!("unknown action: {other}")),
+    }
+    .map_err(err)
+}
+
+#[tauri::command]
+pub async fn set_file_selection(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    indices: Vec<usize>,
+) -> CmdResult<()> {
+    let set: HashSet<usize> = indices.into_iter().collect();
+    state
+        .api
+        .api_torrent_action_update_only_files(id.into(), &set)
+        .await
+        .map(|_| ())
+        .map_err(err)
+}
+
+// ---------------------------------------------------------------- adding
+
+#[derive(Deserialize)]
+pub struct StageRequest {
+    pub kind: String,
+    pub value: String,
+}
+
+#[tauri::command]
+pub async fn stage_source(
+    state: tauri::State<'_, AppState>,
+    request: StageRequest,
+) -> CmdResult<StagedInfo> {
+    let mut staged = match request.kind.as_str() {
+        "file" => {
+            let bytes = tokio::fs::read(&request.value).await.map_err(err)?;
+            Staged {
+                kind: "file".into(),
+                source: request.value.clone(),
+                bytes: Some(Bytes::from(bytes)),
+                info_hash: None,
+                name: PathBuf::from(&request.value)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned()),
+                total_bytes: 0,
+                trackers: Vec::new(),
+                files: Vec::new(),
+                skipped: Vec::new(),
+                resolved: false,
+            }
+        }
+        _ => {
+            let value = request.value.trim().to_string();
+            if !torrentsrc::looks_like_source(&value) {
+                return Err("That does not look like a magnet link, torrent URL or info hash.".into());
+            }
+            let parsed = torrentsrc::parse_magnet(&value);
+            Staged {
+                kind: if value.starts_with("magnet:") {
+                    "magnet".into()
+                } else {
+                    "url".into()
+                },
+                source: value,
+                bytes: None,
+                info_hash: parsed.info_hash,
+                name: parsed.name,
+                total_bytes: parsed.size.unwrap_or(0),
+                trackers: parsed.trackers,
+                files: Vec::new(),
+                skipped: Vec::new(),
+                resolved: false,
+            }
+        }
+    };
+
+    // A .torrent file carries its own metadata, so the file list is available
+    // immediately without touching the network.
+    if staged.bytes.is_some() {
+        if let Ok(resolved) = resolve(&state.session, &staged, &[]).await {
+            staged = resolved;
+        }
+    }
+    staged.skipped = skipped_indices(&staged.files, &state.settings.read());
+
+    let token = uuid::Uuid::new_v4().to_string();
+    state.staged.lock().insert(token.clone(), staged.clone());
+    Ok(StagedInfo::from(token, &staged))
+}
+
+/// Files whose extension the user has chosen not to download by default.
+fn skipped_indices(files: &[StagedFile], settings: &Settings) -> Vec<usize> {
+    files
+        .iter()
+        .filter(|f| settings.is_skipped(&f.name))
+        .map(|f| f.index)
+        .collect()
+}
+
+async fn resolve(
+    session: &Arc<Session>,
+    staged: &Staged,
+    extra_trackers: &[String],
+) -> anyhow::Result<Staged> {
+    let add = match &staged.bytes {
+        Some(bytes) => AddTorrent::from_bytes(bytes.clone()),
+        None => AddTorrent::from_url(staged.source.clone()),
+    };
+    let trackers = torrentsrc::merge_trackers(&[&staged.trackers, extra_trackers]);
+    let opts = AddTorrentOptions {
+        list_only: true,
+        trackers: if trackers.is_empty() {
+            None
+        } else {
+            Some(trackers)
+        },
+        ..Default::default()
+    };
+    let response = session.add_torrent(add, Some(opts)).await?;
+    let listed = match response {
+        AddTorrentResponse::ListOnly(l) => l,
+        _ => anyhow::bail!("unexpected engine response while inspecting the torrent"),
+    };
+
+    let files: Vec<StagedFile> = listed
+        .info
+        .iter_file_details()
+        .enumerate()
+        .map(|(index, d)| StagedFile {
+            index,
+            name: d.filename.to_string(),
+            components: d.filename.to_vec(),
+            length: d.len,
+        })
+        .collect();
+
+    let mut out = staged.clone();
+    out.total_bytes = files.iter().map(|f| f.length).sum();
+    out.name = listed
+        .info
+        .name()
+        .map(|n| n.into_owned())
+        .or_else(|| staged.name.clone());
+    out.info_hash = Some(listed.info_hash.as_string());
+    out.files = files;
+    out.bytes = Some(listed.torrent_bytes);
+    out.resolved = true;
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn resolve_staged(
+    state: tauri::State<'_, AppState>,
+    token: String,
+) -> CmdResult<StagedInfo> {
+    let staged = state
+        .staged
+        .lock()
+        .get(&token)
+        .cloned()
+        .ok_or("that torrent is no longer staged")?;
+    if staged.resolved {
+        return Ok(StagedInfo::from(token, &staged));
+    }
+    let extra = state.settings.read().active_trackers();
+    let mut resolved = resolve(&state.session, &staged, &extra).await.map_err(err)?;
+    resolved.skipped = skipped_indices(&resolved.files, &state.settings.read());
+    state.staged.lock().insert(token.clone(), resolved.clone());
+    Ok(StagedInfo::from(token, &resolved))
+}
+
+#[tauri::command]
+pub fn discard_staged(state: tauri::State<'_, AppState>, token: String) {
+    state.staged.lock().remove(&token);
+}
+
+#[derive(Deserialize)]
+pub struct CommitRequest {
+    pub token: String,
+    pub download_dir: String,
+    pub start_paused: bool,
+    pub use_auto_packs: bool,
+    pub pack_ids: Vec<String>,
+    pub extra_trackers: Vec<String>,
+    pub selected_files: Option<Vec<usize>>,
+}
+
+#[derive(Serialize)]
+pub struct CommitResult {
+    pub id: usize,
+    pub name: String,
+    pub tracker_count: usize,
+}
+
+#[tauri::command]
+pub async fn commit_staged(
+    state: tauri::State<'_, AppState>,
+    request: CommitRequest,
+) -> CmdResult<CommitResult> {
+    let staged = state
+        .staged
+        .lock()
+        .get(&request.token)
+        .cloned()
+        .ok_or("that torrent is no longer staged")?;
+
+    let (auto, from_packs) = {
+        let settings = state.settings.read();
+        (
+            if request.use_auto_packs {
+                settings.active_trackers()
+            } else {
+                Vec::new()
+            },
+            settings.trackers_in_packs(&request.pack_ids),
+        )
+    };
+    let trackers = torrentsrc::merge_trackers(&[
+        &staged.trackers,
+        &auto,
+        &from_packs,
+        &request.extra_trackers,
+    ]);
+
+    let (session_default, incomplete_dir) = {
+        let settings = state.settings.read();
+        (settings.download_dir.clone(), settings.incomplete_dir.trim().to_string())
+    };
+
+    // With an incomplete folder set, torrents land in their own sub-folder
+    // there and move to the real destination on completion.
+    let (output_folder, pending_final) = if incomplete_dir.is_empty() {
+        (
+            resolve_output_folder(&request.download_dir, &session_default, &staged),
+            None,
+        )
+    } else {
+        let destination = if request.download_dir.trim().is_empty() {
+            session_default.clone()
+        } else {
+            request.download_dir.clone()
+        };
+        (
+            Some(staging_folder(&incomplete_dir, &staged)),
+            Some(explicit_output_folder(&destination, &staged)),
+        )
+    };
+
+    let add = match &staged.bytes {
+        Some(bytes) => AddTorrent::from_bytes(bytes.clone()),
+        None => AddTorrent::from_url(staged.source.clone()),
+    };
+    let opts = AddTorrentOptions {
+        paused: request.start_paused,
+        overwrite: true,
+        output_folder,
+        only_files: request.selected_files.clone().filter(|f| {
+            // An empty or complete selection means "everything".
+            !f.is_empty() && f.len() != staged.files.len()
+        }),
+        trackers: if trackers.is_empty() {
+            None
+        } else {
+            Some(trackers.clone())
+        },
+        ..Default::default()
+    };
+
+    let response = state
+        .session
+        .add_torrent(add, Some(opts))
+        .await
+        .map_err(err)?;
+    let (id, handle) = match response {
+        AddTorrentResponse::Added(id, handle) => (id, handle),
+        AddTorrentResponse::AlreadyManaged(id, handle) => (id, handle),
+        AddTorrentResponse::ListOnly(_) => return Err("engine returned no torrent".into()),
+    };
+
+    let info_hash = handle.info_hash().as_string();
+    if let Some(bytes) = &staged.bytes {
+        let path = state.paths.source_file(&info_hash);
+        let _ = tokio::fs::write(path, bytes).await;
+    }
+    if let Some(destination) = pending_final {
+        let file = state.paths.pending_moves_file();
+        let mut moves = settings::load_pending_moves(&file);
+        moves.insert(info_hash, destination);
+        settings::save_pending_moves(&file, &moves);
+    }
+    state.staged.lock().remove(&request.token);
+
+    Ok(CommitResult {
+        id,
+        name: handle
+            .name()
+            .unwrap_or_else(|| handle.info_hash().as_string()),
+        tracker_count: trackers.len(),
+    })
+}
+
+/// Recreates librqbit's per-torrent sub-folder for an explicit destination.
+fn resolve_output_folder(chosen: &str, session_default: &str, staged: &Staged) -> Option<String> {
+    let chosen = chosen.trim();
+    if chosen.is_empty() || chosen == session_default {
+        return None;
+    }
+    Some(explicit_output_folder(chosen, staged))
+}
+
+fn safe_name(staged: &Staged) -> Option<String> {
+    staged
+        .name
+        .as_ref()
+        .map(|n| n.replace(['/', '\\'], "_"))
+        .filter(|n| !n.is_empty())
+}
+
+/// Where the files finally live: the base folder, plus the torrent's own
+/// sub-folder when it holds more than one file.
+fn explicit_output_folder(base: &str, staged: &Staged) -> String {
+    let mut path = PathBuf::from(base.trim());
+    if staged.files.len() > 1 {
+        if let Some(name) = safe_name(staged) {
+            path.push(name);
+        }
+    }
+    path.to_string_lossy().into_owned()
+}
+
+/// Inside the incomplete folder every torrent gets its own sub-folder, so the
+/// whole lot can be moved in one go when it finishes.
+fn staging_folder(base: &str, staged: &Staged) -> String {
+    let mut path = PathBuf::from(base.trim());
+    path.push(safe_name(staged).unwrap_or_else(|| "torrent".into()));
+    path.to_string_lossy().into_owned()
+}
+
+// ------------------------------------------------------- tracker plumbing
+
+/// Fires a notification so you can check they actually reach your desktop.
+#[tauri::command]
+pub fn test_notification(app: tauri::AppHandle) -> CmdResult<()> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title("Greenhouse")
+        .body("Notifications are working.")
+        .show()
+        .map_err(err)
+}
+
+#[tauri::command]
+pub fn parse_trackers(blob: String) -> Vec<String> {
+    torrentsrc::parse_tracker_blob(&blob)
+}
+
+#[tauri::command]
+pub async fn fetch_tracker_list(
+    state: tauri::State<'_, AppState>,
+    url: String,
+) -> CmdResult<Vec<String>> {
+    let response = state.http.get(&url).send().await.map_err(err)?;
+    if !response.status().is_success() {
+        return Err(format!("the server replied {}", response.status()));
+    }
+    let body = response.text().await.map_err(err)?;
+    let list = torrentsrc::parse_tracker_blob(&body);
+    if list.is_empty() {
+        return Err("no tracker URLs found at that address".into());
+    }
+    Ok(list)
+}
+
+#[derive(Serialize)]
+pub struct ApplyTrackersResult {
+    pub id: usize,
+    pub tracker_count: usize,
+    pub added: usize,
+}
+
+/// The engine fixes a torrent's tracker set when it is added, so applying new
+/// trackers means re-adding it in place: same files, same destination, same
+/// selection, no re-download.
+#[tauri::command]
+pub async fn apply_trackers(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    trackers: Vec<String>,
+    replace: bool,
+) -> CmdResult<ApplyTrackersResult> {
+    apply_trackers_inner(&state, id, trackers, replace).await
+}
+
+async fn apply_trackers_inner(
+    state: &AppState,
+    id: usize,
+    trackers: Vec<String>,
+    replace: bool,
+) -> CmdResult<ApplyTrackersResult> {
+    let handle = state
+        .session
+        .get(id.into())
+        .ok_or("that torrent is no longer in the session")?;
+
+    let info_hash = handle.info_hash().as_string();
+    let output_folder = handle.output_folder().to_string_lossy().into_owned();
+    let only_files = handle.only_files();
+    let paused = handle.is_paused();
+    let name = handle.name();
+    let existing: Vec<String> = handle
+        .shared()
+        .trackers
+        .iter()
+        .map(|u| u.to_string())
+        .collect();
+
+    let merged = if replace {
+        torrentsrc::merge_trackers(&[&trackers])
+    } else {
+        torrentsrc::merge_trackers(&[&existing, &trackers])
+    };
+    let added = merged.len().saturating_sub(existing.len());
+
+    let bytes: Option<Bytes> = handle
+        .metadata
+        .load()
+        .as_ref()
+        .map(|m| m.torrent_bytes.clone())
+        .or_else(|| {
+            std::fs::read(state.paths.source_file(&info_hash))
+                .ok()
+                .map(Bytes::from)
+        });
+
+    state
+        .session
+        .delete(id.into(), false)
+        .await
+        .map_err(|e| format!("could not detach the torrent: {e}"))?;
+
+    let add = match &bytes {
+        Some(b) => AddTorrent::from_bytes(b.clone()),
+        None => AddTorrent::from_url(magnet_for(&info_hash, name.as_deref(), &merged)),
+    };
+    let opts = AddTorrentOptions {
+        paused,
+        overwrite: true,
+        output_folder: Some(output_folder.clone()),
+        only_files: only_files.clone(),
+        trackers: Some(merged.clone()),
+        ..Default::default()
+    };
+
+    let response = match state.session.add_torrent(add, Some(opts)).await {
+        Ok(response) => response,
+        Err(e) => {
+            // Re-attaching failed, so put the torrent back as it was rather
+            // than leaving it detached from the session.
+            let rollback = match &bytes {
+                Some(b) => AddTorrent::from_bytes(b.clone()),
+                None => AddTorrent::from_url(magnet_for(&info_hash, name.as_deref(), &existing)),
+            };
+            let restored = state
+                .session
+                .add_torrent(
+                    rollback,
+                    Some(AddTorrentOptions {
+                        paused,
+                        overwrite: true,
+                        output_folder: Some(output_folder.clone()),
+                        only_files: only_files.clone(),
+                        trackers: Some(existing.clone()),
+                        ..Default::default()
+                    }),
+                )
+                .await
+                .is_ok();
+            return Err(if restored {
+                format!("Could not add those trackers, so the torrent was left as it was: {e}")
+            } else {
+                format!("Could not add those trackers, and the torrent could not be restored: {e}")
+            });
+        }
+    };
+    let new_id = match response {
+        AddTorrentResponse::Added(id, _) | AddTorrentResponse::AlreadyManaged(id, _) => id,
+        AddTorrentResponse::ListOnly(_) => return Err("engine returned no torrent".into()),
+    };
+
+    Ok(ApplyTrackersResult {
+        id: new_id,
+        tracker_count: merged.len(),
+        added,
+    })
+}
+
+fn magnet_for(info_hash: &str, name: Option<&str>, trackers: &[String]) -> String {
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    let mut uri = format!("magnet:?xt=urn:btih:{info_hash}");
+    if let Some(name) = name {
+        uri.push_str(&format!(
+            "&dn={}",
+            utf8_percent_encode(name, NON_ALPHANUMERIC)
+        ));
+    }
+    for t in trackers {
+        uri.push_str(&format!("&tr={}", utf8_percent_encode(t, NON_ALPHANUMERIC)));
+    }
+    uri
+}
+
+/// Bulk-applies the current tracker selection to every torrent in the session.
+#[tauri::command]
+pub async fn apply_trackers_to_all(
+    state: tauri::State<'_, AppState>,
+    trackers: Vec<String>,
+) -> CmdResult<usize> {
+    let ids: Vec<usize> = engine::collect_rows(&state.session)
+        .iter()
+        .map(|r| r.id)
+        .collect();
+    apply_to_each(&state, ids, trackers).await
+}
+
+/// Bulk-applies trackers to a chosen set of torrents.
+#[tauri::command]
+pub async fn apply_trackers_many(
+    state: tauri::State<'_, AppState>,
+    ids: Vec<usize>,
+    trackers: Vec<String>,
+) -> CmdResult<usize> {
+    apply_to_each(&state, ids, trackers).await
+}
+
+async fn apply_to_each(
+    state: &AppState,
+    ids: Vec<usize>,
+    trackers: Vec<String>,
+) -> CmdResult<usize> {
+    let mut changed = 0usize;
+    let mut last_error = None;
+    for id in ids {
+        match apply_trackers_inner(state, id, trackers.clone(), false).await {
+            Ok(_) => changed += 1,
+            Err(e) => last_error = Some(e),
+        }
+    }
+    match last_error {
+        Some(e) if changed == 0 => Err(e),
+        _ => Ok(changed),
+    }
+}
+
+/// The magnet link for a torrent, including every tracker it currently has.
+#[tauri::command]
+pub fn magnet_link(state: tauri::State<'_, AppState>, id: usize) -> CmdResult<String> {
+    let handle = state
+        .session
+        .get(id.into())
+        .ok_or("that torrent is no longer in the session")?;
+    let trackers: Vec<String> = handle
+        .shared()
+        .trackers
+        .iter()
+        .map(|u| u.to_string())
+        .collect();
+    Ok(magnet_for(
+        &handle.info_hash().as_string(),
+        handle.name().as_deref(),
+        &trackers,
+    ))
+}
+
+/// Everything needed to put a removed torrent back exactly as it was.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RestoreToken {
+    pub info_hash: String,
+    pub name: Option<String>,
+    pub output_folder: String,
+    pub trackers: Vec<String>,
+    pub only_files: Option<Vec<usize>>,
+    pub paused: bool,
+}
+
+/// Detaches a torrent but leaves the files, returning what is needed to undo it.
+#[tauri::command]
+pub async fn forget_torrent(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+) -> CmdResult<RestoreToken> {
+    forget_inner(&state, id).await
+}
+
+pub async fn forget_inner(state: &AppState, id: usize) -> CmdResult<RestoreToken> {
+    let handle = state
+        .session
+        .get(id.into())
+        .ok_or("that torrent is no longer in the session")?;
+    let token = RestoreToken {
+        info_hash: handle.info_hash().as_string(),
+        name: handle.name(),
+        output_folder: handle.output_folder().to_string_lossy().into_owned(),
+        trackers: handle
+            .shared()
+            .trackers
+            .iter()
+            .map(|u| u.to_string())
+            .collect(),
+        only_files: handle.only_files(),
+        paused: handle.is_paused(),
+    };
+    // Keep a copy of the metadata so undo does not need the swarm.
+    if let Some(bytes) = handle.metadata.load().as_ref().map(|m| m.torrent_bytes.clone()) {
+        let _ = tokio::fs::write(state.paths.source_file(&token.info_hash), &bytes).await;
+    }
+    state
+        .session
+        .delete(id.into(), false)
+        .await
+        .map_err(|e| format!("could not remove the torrent: {e}"))?;
+    Ok(token)
+}
+
+/// Puts a forgotten torrent back, files and all.
+#[tauri::command]
+pub async fn restore_torrent(
+    state: tauri::State<'_, AppState>,
+    token: RestoreToken,
+) -> CmdResult<usize> {
+    restore_inner(&state, token).await
+}
+
+pub async fn restore_inner(state: &AppState, token: RestoreToken) -> CmdResult<usize> {
+    let source = state.paths.source_file(&token.info_hash);
+    let bytes = tokio::fs::read(&source).await.ok().map(Bytes::from);
+    let add = match &bytes {
+        Some(b) => AddTorrent::from_bytes(b.clone()),
+        None => AddTorrent::from_url(magnet_for(
+            &token.info_hash,
+            token.name.as_deref(),
+            &token.trackers,
+        )),
+    };
+    let response = state
+        .session
+        .add_torrent(
+            add,
+            Some(AddTorrentOptions {
+                paused: token.paused,
+                overwrite: true,
+                output_folder: Some(token.output_folder.clone()),
+                only_files: token.only_files.clone(),
+                trackers: Some(token.trackers.clone()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .map_err(|e| format!("could not put the torrent back: {e}"))?;
+    match response {
+        AddTorrentResponse::Added(id, _) | AddTorrentResponse::AlreadyManaged(id, _) => Ok(id),
+        AddTorrentResponse::ListOnly(_) => Err("engine returned no torrent".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The exact payloads `src/lib/api.ts` sends must deserialize into the
+    /// command argument types, so the two halves cannot drift apart silently.
+    #[test]
+    fn stage_request_matches_frontend_payload() {
+        let json = serde_json::json!({ "kind": "text", "value": "magnet:?xt=urn:btih:abc" });
+        let parsed: StageRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.kind, "text");
+        assert_eq!(parsed.value, "magnet:?xt=urn:btih:abc");
+    }
+
+    #[test]
+    fn commit_request_matches_frontend_payload() {
+        let json = serde_json::json!({
+            "token": "abc",
+            "download_dir": "/home/you/Downloads",
+            "start_paused": false,
+            "use_auto_packs": true,
+            "pack_ids": ["starter"],
+            "extra_trackers": ["udp://tracker.example:1337/announce"],
+            "selected_files": [0, 2]
+        });
+        let parsed: CommitRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.token, "abc");
+        assert!(parsed.use_auto_packs);
+        assert_eq!(parsed.selected_files, Some(vec![0, 2]));
+    }
+
+    #[test]
+    fn commit_request_accepts_null_file_selection() {
+        let json = serde_json::json!({
+            "token": "abc",
+            "download_dir": "",
+            "start_paused": true,
+            "use_auto_packs": false,
+            "pack_ids": [],
+            "extra_trackers": [],
+            "selected_files": null
+        });
+        let parsed: CommitRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.selected_files, None);
+    }
+
+    /// A custom destination keeps librqbit's per-torrent sub-folder behaviour.
+    #[test]
+    fn output_folder_follows_the_chosen_destination() {
+        let multi = Staged {
+            kind: "file".into(),
+            source: String::new(),
+            bytes: None,
+            info_hash: None,
+            name: Some("Some Release".into()),
+            total_bytes: 0,
+            trackers: vec![],
+            files: vec![
+                StagedFile { index: 0, name: "a".into(), components: vec![], length: 1 },
+                StagedFile { index: 1, name: "b".into(), components: vec![], length: 1 },
+            ],
+            skipped: vec![],
+            resolved: true,
+        };
+        let single = Staged { files: vec![], ..multi.clone() };
+
+        // Session default: let the engine choose, as it does for a plain add.
+        assert_eq!(resolve_output_folder("/dl", "/dl", &multi), None);
+        // Custom destination, many files: recreate the sub-folder.
+        assert_eq!(
+            resolve_output_folder("/other", "/dl", &multi),
+            Some("/other/Some Release".to_string())
+        );
+        // Custom destination, single file: no sub-folder.
+        assert_eq!(
+            resolve_output_folder("/other", "/dl", &single),
+            Some("/other".to_string())
+        );
+    }
+}
