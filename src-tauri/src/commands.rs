@@ -635,6 +635,44 @@ pub async fn commit_staged<R: tauri::Runtime>(
     commit_resolved(&state, &staged, &request).await
 }
 
+/// Adds a .torrent file with the saved defaults, as the add sheet would if
+/// nothing in it were changed.
+pub async fn add_file_with_defaults(
+    state: &AppState,
+    source: String,
+    bytes: Bytes,
+) -> CmdResult<CommitResult> {
+    let staged = Staged {
+        kind: "file".into(),
+        source,
+        bytes: Some(bytes),
+        info_hash: None,
+        name: None,
+        total_bytes: 0,
+        trackers: Vec::new(),
+        files: Vec::new(),
+        skipped: Vec::new(),
+        resolved: false,
+        queued: None,
+    };
+    let mut staged = resolve(&state.session, &staged, &[]).await.map_err(err)?;
+    staged.skipped = skipped_indices(&staged.files, &state.settings.read());
+
+    let request = {
+        let settings = state.settings.read();
+        CommitRequest {
+            token: String::new(),
+            download_dir: settings.download_dir.clone(),
+            start_paused: settings.start_paused,
+            use_auto_packs: settings.auto_apply_trackers,
+            pack_ids: Vec::new(),
+            extra_trackers: Vec::new(),
+            selected_files: default_selection(&staged),
+        }
+    };
+    commit_resolved(state, &staged, &request).await
+}
+
 fn commit_trackers(state: &AppState, staged: &Staged, request: &CommitRequest) -> Vec<String> {
     let settings = state.settings.read();
     let auto = if request.use_auto_packs {
@@ -1322,6 +1360,58 @@ mod tests {
             assert_eq!(engine::collect_rows(&state.session).len(), 1);
             assert!(state.staged.lock().is_empty());
             assert!(pending_adds(&state).is_empty());
+        });
+    }
+
+    /// A .torrent file in the watch folder is added once, and one that cannot
+    /// be read is set aside instead of being retried forever.
+    #[test]
+    fn watch_folder_adds_each_torrent_once() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("watch", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+
+            let payload = root.join("payload");
+            std::fs::create_dir_all(&payload).unwrap();
+            std::fs::write(payload.join("hello.txt"), b"hello from the watch folder").unwrap();
+            let torrent = librqbit::create_torrent(
+                &payload,
+                librqbit::CreateTorrentOptions { name: None, trackers: vec![], piece_length: None },
+                &librqbit::spawn_utils::BlockingSpawner::new(1),
+            )
+            .await
+            .unwrap()
+            .as_bytes()
+            .unwrap();
+
+            let watch = root.join("watch");
+            std::fs::create_dir_all(&watch).unwrap();
+            std::fs::write(watch.join("hello.torrent"), &torrent).unwrap();
+            std::fs::write(watch.join("broken.torrent"), b"not a torrent").unwrap();
+            std::fs::write(watch.join("notes.txt"), b"left alone").unwrap();
+            {
+                let mut settings = state.settings.write();
+                settings.watch_dir = watch.to_string_lossy().into_owned();
+                settings.start_paused = true;
+            }
+            let mut added = events(&app, "greenhouse://added");
+            let mut failed = events(&app, "greenhouse://add-failed");
+
+            crate::watch::scan(app.handle(), Duration::ZERO).await;
+            crate::watch::scan(app.handle(), Duration::ZERO).await;
+
+            assert_eq!(engine::collect_rows(&state.session).len(), 1);
+            assert!(added.try_recv().is_ok());
+            assert!(added.try_recv().is_err(), "added twice");
+            assert!(failed.try_recv().unwrap().contains("broken.torrent"));
+            assert!(watch.join("hello.torrent.added").exists());
+            assert!(watch.join("broken.torrent.failed").exists());
+            assert!(!watch.join("hello.torrent").exists());
+            assert!(watch.join("notes.txt").exists());
         });
     }
 

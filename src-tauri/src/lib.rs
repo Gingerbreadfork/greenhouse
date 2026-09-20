@@ -5,6 +5,7 @@ mod seeding;
 mod supervisor;
 mod settings;
 mod torrentsrc;
+mod watch;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -81,6 +82,7 @@ pub fn run() {
 
             spawn_ticker(app.handle().clone(), session);
             refresh_stale_blocklist(app.handle().clone());
+            watch::spawn(app.handle().clone());
             forward_launch_arguments(app.handle().clone());
             Ok(())
         })

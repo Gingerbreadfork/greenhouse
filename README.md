@@ -69,6 +69,9 @@ sheet stays usable, so you can hit *Add* before it finishes. A magnet whose
 peers are slow to answer waits at the top of the list and is added the moment
 its details arrive; you can stop it from there at any time.
 
+**Watch folder.** Name a folder and any `.torrent` file saved into it is added
+with your defaults, then renamed so it is not picked up twice.
+
 **Add without asking.** Turn on *Add new torrents without asking* in Settings
 and magnets and `.torrent` files are added straight away with your saved
 folder, tracker packs and skipped file types, with no sheet in between.

@@ -252,6 +252,7 @@ export const settings: Settings = {
   bind_interface: '',
   blocklist_url: '',
   incomplete_dir: '/home/you/Downloads/.incomplete',
+  watch_dir: '',
   skip_types_enabled: true,
   skip_types: ['exe', 'msi', 'bat', 'cmd', 'com', 'scr', 'vbs', 'ps1'],
   max_active_downloads: 3,

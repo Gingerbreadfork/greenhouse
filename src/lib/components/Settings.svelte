@@ -143,6 +143,28 @@
     </div>
     <div class="field">
       <div class="field-text">
+        <span class="label">Add torrent files from a folder</span>
+        <span class="path">
+          {settings.watch_dir || 'Off. Pick a folder and .torrent files saved there are added'}
+        </span>
+      </div>
+      <div class="pair">
+        {#if settings.watch_dir}
+          <button class="btn" onclick={() => store.patchSettings({ watch_dir: '' })}>
+            Turn off
+          </button>
+        {/if}
+        <button
+          class="btn"
+          onclick={async () => {
+            const dir = await chooseFolder('Choose a folder to watch for torrent files');
+            if (dir) store.patchSettings({ watch_dir: dir });
+          }}>Choose…</button
+        >
+      </div>
+    </div>
+    <div class="field">
+      <div class="field-text">
         <span class="label">Start new torrents paused</span>
         <span class="hint">Useful when you want to pick files before anything downloads.</span>
       </div>

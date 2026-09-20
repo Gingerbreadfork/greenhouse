@@ -59,6 +59,8 @@ pub struct Settings {
 
     // Files
     pub incomplete_dir: String,
+    /// Folder whose .torrent files are added automatically. Empty means off.
+    pub watch_dir: String,
     pub skip_types_enabled: bool,
     pub skip_types: Vec<String>,
 
@@ -95,6 +97,7 @@ impl Default for Settings {
             bind_interface: String::new(),
             blocklist_url: String::new(),
             incomplete_dir: String::new(),
+            watch_dir: String::new(),
             skip_types_enabled: true,
             skip_types: default_skip_types(),
             max_active_downloads: 0,

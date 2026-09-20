@@ -110,6 +110,7 @@ export interface Settings {
   bind_interface: string;
   blocklist_url: string;
   incomplete_dir: string;
+  watch_dir: string;
   skip_types_enabled: boolean;
   skip_types: string[];
   max_active_downloads: number;
