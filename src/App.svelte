@@ -307,6 +307,10 @@
     }
     if (typing || modalOpen) return;
 
+    if (event.key === 'q' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      api.quit();
+    }
     if (event.key === 'o' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       pickFiles();

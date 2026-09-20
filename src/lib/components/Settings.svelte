@@ -499,6 +499,45 @@
   </section>
 
   <section class="group">
+    <h2>Background</h2>
+    <div class="field wrap">
+      <div class="field-text">
+        <span class="label">Keep running when the window is closed</span>
+        <span class="hint">
+          Downloads, seeding, feeds and the watch folder carry on. Open Greenhouse again from
+          your apps, or from its tray icon if your desktop shows one.
+        </span>
+      </div>
+      <Switch
+        checked={settings.close_to_background}
+        onchange={(on) => store.patchSettings({ close_to_background: on })}
+      />
+    </div>
+    <div class="field">
+      <div class="field-text">
+        <span class="label">Start when I log in</span>
+        <span class="hint">Starts quietly, without opening the window.</span>
+      </div>
+      <Switch
+        checked={settings.start_on_login}
+        onchange={(on) =>
+          store
+            .patchSettings({ start_on_login: on })
+            .catch((e) => store.toast('Could not change that', 'bad', String(e)))}
+      />
+    </div>
+    {#if settings.close_to_background}
+      <div class="field">
+        <div class="field-text">
+          <span class="label">Quit Greenhouse</span>
+          <span class="hint">Closing the window no longer does. Ctrl+Q also quits.</span>
+        </div>
+        <button class="btn" onclick={() => api.quit()}>Quit</button>
+      </div>
+    {/if}
+  </section>
+
+  <section class="group">
     <h2>Notifications</h2>
     <div class="field">
       <div class="field-text">

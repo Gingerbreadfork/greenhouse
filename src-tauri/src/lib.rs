@@ -1,5 +1,6 @@
 mod activation;
 mod activity;
+mod background;
 mod commands;
 mod engine;
 mod feeds;
@@ -39,12 +40,25 @@ pub fn run() {
             if !args.is_empty() {
                 let _ = app.emit("greenhouse://open", args);
             }
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                activation::present(&window, activation::take_launch_token());
-            }
+            background::show(app, activation::take_launch_token());
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Whether the window shows is ours to decide, not something to restore.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .build(),
+        )
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" && background::keeps_running(window.app_handle()) {
+                    api.prevent_close();
+                    background::hide(window);
+                }
+            }
+        })
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -90,6 +104,10 @@ pub fn run() {
                     .unwrap_or_default(),
             });
 
+            background::sync_tray(app.handle(), background::keeps_running(app.handle()));
+            if !background::launched_hidden() {
+                background::show(app.handle(), None);
+            }
             commands::restore_queue(app.handle());
             spawn_ticker(app.handle().clone());
             refresh_stale_blocklist(app.handle().clone());
@@ -100,6 +118,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
+            commands::quit,
             commands::list_interfaces,
             commands::free_space,
             commands::restart_engine,
@@ -131,8 +150,15 @@ pub fn run() {
             commands::forget_torrent,
             commands::restore_torrent,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Greenhouse");
+        .build(tauri::generate_context!())
+        .expect("error while starting Greenhouse")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.seeding.lock().save_if_dirty(&state.paths.seeding_file());
+                }
+            }
+        });
 }
 
 /// Pushes a full snapshot to the window on a fixed cadence, so the UI never
@@ -151,6 +177,14 @@ fn spawn_ticker(app: tauri::AppHandle) {
             let torrents = engine::collect_rows(&session);
             supervisor.tick(&app, &state, &torrents).await;
 
+            // A hidden window has nothing to draw.
+            let visible = app
+                .get_webview_window("main")
+                .and_then(|w| w.is_visible().ok())
+                .unwrap_or(true);
+            if !visible {
+                continue;
+            }
             let session_summary = engine::session_summary(&session, &state.settings.read());
             let _ = app.emit(
                 "greenhouse://tick",

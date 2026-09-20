@@ -118,6 +118,8 @@ export interface Settings {
   seed_ratio_limit: number;
   seed_time_limit_minutes: number;
   notify_on_done: boolean;
+  close_to_background: boolean;
+  start_on_login: boolean;
   player_command: string;
   packs: TrackerPack[];
   feeds: Feed[];

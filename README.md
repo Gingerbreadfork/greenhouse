@@ -132,6 +132,10 @@ page counts what it turns away.
 traffic never falls back to your normal connection. If that interface is
 missing at launch, traffic is blocked rather than rerouted.
 
+**In the background.** Let Greenhouse keep running when you close its window,
+with a tray icon where the desktop shows one, and start it quietly at login.
+Opening it again from your apps brings the window back.
+
 **Desktop fit.** Registers as your system's magnet handler, with a second
 launch handing the link to the running window. Remembers its size and position.
 Desktop notification when a download finishes, with a button to test it.

@@ -260,6 +260,8 @@ export const settings: Settings = {
   seed_ratio_limit: 2,
   seed_time_limit_minutes: 0,
   notify_on_done: true,
+  close_to_background: false,
+  start_on_login: false,
   player_command: '',
   feed_interval_minutes: 30,
   feeds: [

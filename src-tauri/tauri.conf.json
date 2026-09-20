@@ -24,7 +24,8 @@
         "center": true,
         "dragDropEnabled": true,
         "theme": null,
-        "transparent": true
+        "transparent": true,
+        "visible": false
       }
     ],
     "security": {

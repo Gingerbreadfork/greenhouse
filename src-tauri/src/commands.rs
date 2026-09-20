@@ -11,6 +11,7 @@ use tauri::{Emitter, Manager};
 use tokio::sync::watch;
 
 use crate::activity::{self, ActivityLog};
+use crate::background;
 use crate::engine::{self, SessionSummary, TorrentDetail, TorrentRow};
 use crate::feeds::{self, FeedStatus, FeedsState};
 use crate::seeding::SeedLedger;
@@ -174,7 +175,21 @@ pub fn list_interfaces() -> Vec<engine::NetInterface> {
 }
 
 #[tauri::command]
-pub fn save_settings(state: tauri::State<'_, AppState>, next: Settings) -> CmdResult<Settings> {
+pub fn quit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
+pub fn save_settings(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    next: Settings,
+) -> CmdResult<Settings> {
+    if next.start_on_login != state.settings.read().start_on_login {
+        background::sync_autostart(next.start_on_login)
+            .map_err(|e| format!("could not change the login entry: {e}"))?;
+    }
+    background::sync_tray(&app, next.close_to_background);
     state
         .session()
         .ratelimits

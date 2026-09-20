@@ -29,6 +29,7 @@
       title: 'Adding',
       rows: [
         [['Ctrl', 'O'], 'Choose a torrent file'],
+        [['Ctrl', 'Q'], 'Quit Greenhouse'],
         [['Ctrl', 'V'], 'Paste a magnet link into the search bar'],
         [['Drop'], 'Drop .torrent files anywhere in the window']
       ]
