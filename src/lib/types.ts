@@ -94,6 +94,7 @@ export interface TrackerPack {
 export interface Settings {
   download_dir: string;
   start_paused: boolean;
+  auto_add: boolean;
   auto_apply_trackers: boolean;
   theme: 'system' | 'dark' | 'light';
   accent: string;

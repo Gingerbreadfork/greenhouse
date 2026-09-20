@@ -21,7 +21,7 @@
 
   import { api } from './lib/api';
   import { store, trackerNote } from './lib/store.svelte';
-  import type { RestoreToken, StagedInfo, TorrentRow } from './lib/types';
+  import type { CommitResult, RestoreToken, StagedInfo, TorrentRow } from './lib/types';
 
   let staged = $state<StagedInfo | null>(null);
   let staging = $state(false);
@@ -38,14 +38,60 @@
     if (staging) return;
     staging = true;
     try {
+      const info = await api.stageSource(kind, value);
+      if (store.settings?.auto_add && !allSkipped(info)) {
+        await addWithDefaults(info);
+        return;
+      }
       const replaced = staged;
-      staged = await api.stageSource(kind, value);
+      staged = info;
       if (replaced) api.discardStaged(replaced.token).catch(() => {});
     } catch (e) {
       store.toast('That could not be opened', 'bad', String(e));
     } finally {
       staging = false;
     }
+  }
+
+  /** Every file is a type skipped by default, so the choice is left to the sheet. */
+  function allSkipped(info: StagedInfo) {
+    return info.files.length > 0 && info.files.every((f) => info.skipped.includes(f.index));
+  }
+
+  /** Adds a staged source with the saved defaults, for when the sheet is skipped. */
+  async function addWithDefaults(info: StagedInfo) {
+    const settings = store.settings!;
+    try {
+      const result = await api.commitStaged({
+        token: info.token,
+        download_dir: settings.download_dir,
+        start_paused: settings.start_paused,
+        use_auto_packs: settings.auto_apply_trackers,
+        pack_ids: [],
+        extra_trackers: [],
+        selected_files:
+          info.files.length > 1
+            ? info.files.filter((f) => !info.skipped.includes(f.index)).map((f) => f.index)
+            : null
+      });
+      announce(result);
+    } catch (e) {
+      api.discardStaged(info.token).catch(() => {});
+      store.toast(`Could not add ${info.name ?? 'that torrent'}`, 'bad', String(e));
+    }
+  }
+
+  function announce(result: CommitResult) {
+    if (result.pending) {
+      store.toast(
+        `Looking for ${result.name}`,
+        'info',
+        'It will be added as soon as a peer sends its details'
+      );
+      return;
+    }
+    store.refresh();
+    store.toast(`Added ${result.name}`, 'good', trackerNote(result.tracker_count));
   }
 
   async function pickFiles() {
@@ -328,16 +374,7 @@
       onclose={() => (staged = null)}
       ondone={(result) => {
         staged = null;
-        if (result.pending) {
-          store.toast(
-            `Looking for ${result.name}`,
-            'info',
-            'It will be added as soon as a peer sends its details'
-          );
-          return;
-        }
-        store.refresh();
-        store.toast(`Added ${result.name}`, 'good', trackerNote(result.tracker_count));
+        announce(result);
       }}
     />
   {/key}

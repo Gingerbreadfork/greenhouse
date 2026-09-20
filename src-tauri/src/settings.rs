@@ -34,6 +34,8 @@ impl Default for TrackerPack {
 pub struct Settings {
     pub download_dir: String,
     pub start_paused: bool,
+    /// Add new torrents with the defaults, without showing the add sheet.
+    pub auto_add: bool,
     /// Master switch for injecting enabled packs into every new torrent.
     pub auto_apply_trackers: bool,
     pub theme: String,
@@ -69,6 +71,7 @@ impl Default for Settings {
         Self {
             download_dir: default_download_dir(),
             start_paused: false,
+            auto_add: false,
             auto_apply_trackers: true,
             theme: "system".into(),
             accent: "glass".into(),

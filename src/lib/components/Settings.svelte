@@ -99,6 +99,18 @@
         onchange={(on) => store.patchSettings({ start_paused: on })}
       />
     </div>
+    <div class="field">
+      <div class="field-text">
+        <span class="label">Add new torrents without asking</span>
+        <span class="hint">
+          Skips the add sheet and uses the folder, tracker packs and file types set here.
+        </span>
+      </div>
+      <Switch
+        checked={settings.auto_add}
+        onchange={(on) => store.patchSettings({ auto_add: on })}
+      />
+    </div>
   </section>
 
   <section class="group">

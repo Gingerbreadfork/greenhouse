@@ -69,6 +69,10 @@ sheet stays usable, so you can hit *Add* before it finishes. A magnet whose
 peers are slow to answer waits at the top of the list and is added the moment
 its details arrive; you can stop it from there at any time.
 
+**Add without asking.** Turn on *Add new torrents without asking* in Settings
+and magnets and `.torrent` files are added straight away with your saved
+folder, tracker packs and skipped file types, with no sheet in between.
+
 **Skip file types.** Extensions you list (`exe`, `msi`, `bat` and friends by
 default) arrive unticked, with a note saying why and a one-click way to include
 them. An `.exe` buried in a torrent is not downloaded unless you ask for it.

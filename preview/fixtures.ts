@@ -236,6 +236,7 @@ export const session: SessionSummary = {
 export const settings: Settings = {
   download_dir: '/home/you/Downloads',
   start_paused: false,
+  auto_add: false,
   auto_apply_trackers: true,
   theme: 'system',
   accent: 'glass',
