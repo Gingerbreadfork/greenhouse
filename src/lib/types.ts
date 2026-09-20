@@ -108,6 +108,7 @@ export interface Settings {
   transport: 'tcp' | 'utp' | 'both';
   peer_limit_per_torrent: number;
   bind_interface: string;
+  blocklist_url: string;
   incomplete_dir: string;
   skip_types_enabled: boolean;
   skip_types: string[];
@@ -125,6 +126,14 @@ export interface Bootstrap {
   /** The interface traffic is tied to for this run, if any. */
   bound_interface: string | null;
   warnings: string[];
+}
+
+export interface BlocklistStatus {
+  /** Whether this run of the engine loaded the list. */
+  active: boolean;
+  /** Seconds since 1970, or null when nothing has been downloaded. */
+  updated_at: number | null;
+  bytes: number;
 }
 
 export interface NetInterface {

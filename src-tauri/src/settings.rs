@@ -54,6 +54,8 @@ pub struct Settings {
     pub peer_limit_per_torrent: u32,
     /// Network interface all traffic is tied to. Empty means any.
     pub bind_interface: String,
+    /// Where the peer blocklist comes from. Empty means no blocklist.
+    pub blocklist_url: String,
 
     // Files
     pub incomplete_dir: String,
@@ -87,6 +89,7 @@ impl Default for Settings {
             transport: "tcp".into(),
             peer_limit_per_torrent: 0,
             bind_interface: String::new(),
+            blocklist_url: String::new(),
             incomplete_dir: String::new(),
             skip_types_enabled: true,
             skip_types: default_skip_types(),
@@ -178,6 +181,11 @@ impl Paths {
     /// should end up once it finishes.
     pub fn pending_moves_file(&self) -> PathBuf {
         self.data_dir.join("incomplete.json")
+    }
+
+    /// The downloaded copy of the peer blocklist the engine reads at launch.
+    pub fn blocklist_file(&self) -> PathBuf {
+        self.data_dir.join("blocklist")
     }
 }
 

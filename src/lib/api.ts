@@ -3,6 +3,7 @@ import type {
   ApplyTrackersResult,
   RestoreToken,
   Bootstrap,
+  BlocklistStatus,
   CommitResult,
   NetInterface,
   SessionSummary,
@@ -15,6 +16,8 @@ import type {
 export const api = {
   bootstrap: () => invoke<Bootstrap>('bootstrap'),
   listInterfaces: () => invoke<NetInterface[]>('list_interfaces'),
+  blocklistStatus: () => invoke<BlocklistStatus>('blocklist_status'),
+  refreshBlocklist: () => invoke<BlocklistStatus>('refresh_blocklist'),
   saveSettings: (next: Settings) => invoke<Settings>('save_settings', { next }),
   listTorrents: () => invoke<TorrentRow[]>('list_torrents'),
   sessionStats: () => invoke<SessionSummary>('session_stats'),

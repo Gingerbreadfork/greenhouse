@@ -23,6 +23,7 @@ pub struct AppState {
     /// Metadata lookups in flight, by staged token. Locked after `staged`.
     pub resolving: Mutex<HashMap<String, Resolving>>,
     pub bound_interface: Option<String>,
+    pub blocklist_active: bool,
     pub startup_warnings: Vec<String>,
     pub http: reqwest::Client,
 }
@@ -191,6 +192,67 @@ pub async fn set_file_selection(
         .await
         .map(|_| ())
         .map_err(err)
+}
+
+#[derive(Serialize)]
+pub struct BlocklistStatus {
+    /// Whether this run of the engine loaded the list.
+    pub active: bool,
+    /// When the downloaded copy was last refreshed, in seconds since 1970.
+    pub updated_at: Option<u64>,
+    pub bytes: u64,
+}
+
+fn blocklist_status_of(state: &AppState) -> BlocklistStatus {
+    let meta = std::fs::metadata(state.paths.blocklist_file()).ok();
+    BlocklistStatus {
+        active: state.blocklist_active,
+        updated_at: meta
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs()),
+        bytes: meta.map(|m| m.len()).unwrap_or(0),
+    }
+}
+
+#[tauri::command]
+pub fn blocklist_status(state: tauri::State<'_, AppState>) -> BlocklistStatus {
+    blocklist_status_of(&state)
+}
+
+/// Fetches the blocklist named in the settings into the copy the engine reads
+/// at launch. With no URL set, the copy is removed.
+pub async fn download_blocklist(state: &AppState) -> CmdResult<()> {
+    let url = state.settings.read().blocklist_url.trim().to_string();
+    let file = state.paths.blocklist_file();
+    if url.is_empty() {
+        let _ = tokio::fs::remove_file(file).await;
+        return Ok(());
+    }
+    let response = state
+        .http
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(180))
+        .send()
+        .await
+        .map_err(err)?;
+    if !response.status().is_success() {
+        return Err(format!("the server replied {}", response.status()));
+    }
+    let body = response.bytes().await.map_err(err)?;
+    if body.is_empty() {
+        return Err("that address returned an empty list".into());
+    }
+    let partial = file.with_extension("part");
+    tokio::fs::write(&partial, &body).await.map_err(err)?;
+    tokio::fs::rename(&partial, &file).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn refresh_blocklist(state: tauri::State<'_, AppState>) -> CmdResult<BlocklistStatus> {
+    download_blocklist(&state).await?;
+    Ok(blocklist_status_of(&state))
 }
 
 // ---------------------------------------------------------------- adding
@@ -1126,6 +1188,7 @@ mod tests {
             staged: Mutex::new(HashMap::new()),
             resolving: Mutex::new(HashMap::new()),
             bound_interface: None,
+            blocklist_active: false,
             startup_warnings: vec![],
             http: reqwest::Client::new(),
         });

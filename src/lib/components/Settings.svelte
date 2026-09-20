@@ -4,8 +4,8 @@
   import Icon from './Icon.svelte';
   import { store } from '../store.svelte';
   import { api } from '../api';
-  import { uptime } from '../format';
-  import type { NetInterface } from '../types';
+  import { bytes, uptime } from '../format';
+  import type { BlocklistStatus, NetInterface } from '../types';
 
   const settings = $derived(store.settings!);
 
@@ -39,6 +39,38 @@
     .listInterfaces()
     .then((list) => (interfaces = list))
     .catch(() => {});
+
+  let blocklist = $state<BlocklistStatus | null>(null);
+  let fetchingBlocklist = $state(false);
+  api
+    .blocklistStatus()
+    .then((status) => (blocklist = status))
+    .catch(() => {});
+
+  const blocklistHint = $derived.by(() => {
+    if (!settings.blocklist_url) return 'The address of a P2P-format list, plain or gzipped.';
+    if (!blocklist?.updated_at) return 'Not downloaded yet.';
+    const when = new Date(blocklist.updated_at * 1000).toLocaleDateString();
+    return blocklist.active
+      ? `In use. Updated ${when}, ${bytes(blocklist.bytes)}.`
+      : `Downloaded ${when}. Greenhouse starts using it when it next starts.`;
+  });
+
+  async function updateBlocklist() {
+    fetchingBlocklist = true;
+    try {
+      blocklist = await api.refreshBlocklist();
+    } catch (e) {
+      store.toast('Could not download the blocklist', 'bad', String(e));
+    } finally {
+      fetchingBlocklist = false;
+    }
+  }
+
+  async function setBlocklistUrl(url: string) {
+    await store.patchSettings({ blocklist_url: url.trim() });
+    await updateBlocklist();
+  }
 
   /** The saved interface stays selectable even while it is unplugged. */
   const interfaceChoices = $derived(
@@ -321,6 +353,29 @@
           <option value={i.name}>{i.name}{i.up ? '' : ' (down)'}</option>
         {/each}
       </select>
+    </div>
+    <div class="field stack">
+      <div class="field-text">
+        <span class="label">Block known bad peers</span>
+        <span class="hint">{blocklistHint}</span>
+      </div>
+      <div class="pair">
+        <input
+          class="wide"
+          value={settings.blocklist_url}
+          spellcheck="false"
+          placeholder="https://…"
+          aria-label="Blocklist address"
+          onchange={(e) => setBlocklistUrl(e.currentTarget.value)}
+        />
+        <button
+          class="btn"
+          disabled={!settings.blocklist_url || fetchingBlocklist}
+          onclick={updateBlocklist}
+        >
+          {fetchingBlocklist ? 'Downloading…' : 'Update now'}
+        </button>
+      </div>
     </div>
     <div class="field">
       <div class="field-text">

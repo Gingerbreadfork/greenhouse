@@ -73,20 +73,25 @@ pub struct Engine {
     pub session: Arc<Session>,
     /// The interface traffic is tied to for this run, if any.
     pub bound_interface: Option<String>,
+    pub blocklist_active: bool,
     pub warnings: Vec<String>,
 }
 
-pub async fn build_session(paths: &Paths, settings: &Settings) -> Result<Engine> {
-    let (bind_device_name, bind_warning) =
-        choose_bind_device(&settings.bind_interface, interface_exists);
+fn session_options(
+    paths: &Paths,
+    settings: &Settings,
+    bind_device_name: Option<String>,
+    blocklist_url: Option<String>,
+) -> SessionOptions {
     let listen_addr: std::net::SocketAddr =
         (std::net::Ipv6Addr::UNSPECIFIED, settings.listen_port).into();
-    let opts = SessionOptions {
+    SessionOptions {
         persistence: Some(SessionPersistenceConfig::Json {
             folder: Some(paths.session_dir()),
         }),
         fastresume: true,
-        bind_device_name: bind_device_name.clone(),
+        bind_device_name,
+        blocklist_url,
         peer_limit: (settings.peer_limit_per_torrent > 0)
             .then_some(settings.peer_limit_per_torrent as usize),
         listen: Some(ListenerOptions {
@@ -101,14 +106,53 @@ pub async fn build_session(paths: &Paths, settings: &Settings) -> Result<Engine>
         },
         client_name_and_version: Some(format!("Greenhouse {}", env!("CARGO_PKG_VERSION"))),
         ..Default::default()
-    };
-    let session = Session::new_with_opts(settings.download_dir.clone().into(), opts)
-        .await
-        .context("could not start the torrent session")?;
+    }
+}
+
+/// The downloaded blocklist as a URL the engine can read, when there is one.
+fn blocklist_source(paths: &Paths, settings: &Settings) -> Option<String> {
+    let file = paths.blocklist_file();
+    if settings.blocklist_url.trim().is_empty() || !file.exists() {
+        return None;
+    }
+    url::Url::from_file_path(file).ok().map(String::from)
+}
+
+/// Starts the engine, without the blocklist if it turns out to be unreadable,
+/// so a bad list cannot keep the app from launching.
+async fn start_session(
+    folder: std::path::PathBuf,
+    blocklist: Option<String>,
+    options: impl Fn(Option<String>) -> SessionOptions,
+) -> Result<(Arc<Session>, bool, Option<String>)> {
+    let wanted = blocklist.is_some();
+    match Session::new_with_opts(folder.clone(), options(blocklist)).await {
+        Ok(session) => Ok((session, wanted, None)),
+        Err(e) if wanted => {
+            let warning =
+                format!("The peer blocklist could not be read, so it is off for now: {e:#}");
+            let session = Session::new_with_opts(folder, options(None)).await?;
+            Ok((session, false, Some(warning)))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+pub async fn build_session(paths: &Paths, settings: &Settings) -> Result<Engine> {
+    let (bind_device_name, bind_warning) =
+        choose_bind_device(&settings.bind_interface, interface_exists);
+    let (session, blocklist_active, blocklist_warning) = start_session(
+        settings.download_dir.clone().into(),
+        blocklist_source(paths, settings),
+        |blocklist| session_options(paths, settings, bind_device_name.clone(), blocklist),
+    )
+    .await
+    .context("could not start the torrent session")?;
     Ok(Engine {
         session,
         bound_interface: bind_device_name,
-        warnings: bind_warning.into_iter().collect(),
+        blocklist_active,
+        warnings: bind_warning.into_iter().chain(blocklist_warning).collect(),
     })
 }
 
@@ -387,6 +431,65 @@ mod tests {
         let (device, warning) = choose_bind_device("wg0", |_| false);
         assert_eq!(device.as_deref(), Some("lo"));
         assert!(warning.unwrap().contains("wg0"));
+    }
+
+    fn offline(blocklist_url: Option<String>) -> SessionOptions {
+        SessionOptions {
+            dht: None,
+            persistence: None,
+            listen: None,
+            disable_local_service_discovery: true,
+            blocklist_url,
+            ..Default::default()
+        }
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("gh-engine-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_downloaded_blocklist_is_loaded() {
+        let dir = scratch("good");
+        let file = dir.join("blocklist");
+        std::fs::write(&file, "Some range:1.2.3.0-1.2.3.255\n").unwrap();
+        let source = url::Url::from_file_path(&file).unwrap().to_string();
+
+        let (_session, active, warning) =
+            start_session(dir.join("dl"), Some(source), offline).await.unwrap();
+        assert!(active);
+        assert_eq!(warning, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_unreadable_blocklist_does_not_stop_the_engine() {
+        let dir = scratch("bad");
+        let file = dir.join("blocklist");
+        std::fs::write(&file, [0xff, 0xfe, 0xfd, b'\n', 0xff]).unwrap();
+        let source = url::Url::from_file_path(&file).unwrap().to_string();
+
+        let (_session, active, warning) =
+            start_session(dir.join("dl"), Some(source), offline).await.unwrap();
+        assert!(!active);
+        assert!(warning.unwrap().contains("blocklist"));
+    }
+
+    #[test]
+    fn the_blocklist_needs_both_a_url_and_a_downloaded_copy() {
+        let dir = scratch("source");
+        let paths = Paths { config_dir: dir.clone(), data_dir: dir.clone() };
+        let mut settings = Settings::default();
+        settings.blocklist_url = "https://example.org/list.gz".into();
+        assert_eq!(blocklist_source(&paths, &settings), None);
+
+        std::fs::write(paths.blocklist_file(), "x").unwrap();
+        assert!(blocklist_source(&paths, &settings).unwrap().starts_with("file://"));
+
+        settings.blocklist_url.clear();
+        assert_eq!(blocklist_source(&paths, &settings), None);
     }
 
     #[test]

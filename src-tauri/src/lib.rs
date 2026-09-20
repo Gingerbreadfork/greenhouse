@@ -67,6 +67,7 @@ pub fn run() {
                 staged: Mutex::new(HashMap::new()),
                 resolving: Mutex::new(HashMap::new()),
                 bound_interface: engine.bound_interface,
+                blocklist_active: engine.blocklist_active,
                 startup_warnings: engine.warnings,
                 http: reqwest::Client::builder()
                     .user_agent(concat!("Greenhouse/", env!("CARGO_PKG_VERSION")))
@@ -76,12 +77,15 @@ pub fn run() {
             });
 
             spawn_ticker(app.handle().clone(), session);
+            refresh_stale_blocklist(app.handle().clone());
             forward_launch_arguments(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
             commands::list_interfaces,
+            commands::blocklist_status,
+            commands::refresh_blocklist,
             commands::save_settings,
             commands::list_torrents,
             commands::session_stats,
@@ -130,6 +134,20 @@ fn spawn_ticker(app: tauri::AppHandle, session: Arc<librqbit::Session>) {
                     session: session_summary,
                 },
             );
+        }
+    });
+}
+
+/// Keeps the downloaded blocklist no more than a day old.
+fn refresh_stale_blocklist(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        let age = std::fs::metadata(state.paths.blocklist_file())
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok());
+        if age.is_none_or(|a| a > Duration::from_secs(24 * 60 * 60)) {
+            let _ = commands::download_blocklist(&state).await;
         }
     });
 }
