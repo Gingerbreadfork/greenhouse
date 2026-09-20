@@ -114,6 +114,8 @@ export interface Settings {
   skip_types: string[];
   max_active_downloads: number;
   max_active_seeds: number;
+  seed_ratio_limit: number;
+  seed_time_limit_minutes: number;
   notify_on_done: boolean;
   packs: TrackerPack[];
 }

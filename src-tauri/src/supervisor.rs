@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
@@ -20,6 +21,8 @@ pub struct Supervisor {
     /// Torrents currently being moved, so a slow move is not started twice.
     moving: HashSet<String>,
     started: bool,
+    last_tick: Option<Instant>,
+    last_saved: Option<Instant>,
 }
 
 impl Supervisor {
@@ -30,11 +33,47 @@ impl Supervisor {
             for row in rows.iter().filter(|r| r.finished) {
                 self.announced.insert(row.info_hash.clone());
             }
+            let live: HashSet<&str> = rows.iter().map(|r| r.info_hash.as_str()).collect();
+            state.seeding.lock().retain(&live);
         }
 
         self.announce_finished(app, state, rows);
         self.move_finished(app, state, rows).await;
+        self.track_seeding(state, rows);
+        self.enforce_seed_limits(state, rows).await;
         self.enforce_queue(state, rows).await;
+    }
+
+    /// Adds this tick's upload and seeding time to the running totals.
+    fn track_seeding(&mut self, state: &AppState, rows: &[TorrentRow]) {
+        let now = Instant::now();
+        let elapsed = self.last_tick.map(|t| now - t).unwrap_or_default();
+        self.last_tick = Some(now);
+
+        let mut ledger = state.seeding.lock();
+        for row in rows {
+            ledger.record(row, elapsed.as_millis() as u64);
+        }
+        if self.last_saved.is_none_or(|t| now - t > Duration::from_secs(30)) {
+            self.last_saved = Some(now);
+            ledger.save_if_dirty(&state.paths.seeding_file());
+        }
+    }
+
+    /// Pauses seeding torrents that have reached the ratio or time limit.
+    async fn enforce_seed_limits(&mut self, state: &AppState, rows: &[TorrentRow]) {
+        let due: Vec<&TorrentRow> = {
+            let settings = state.settings.read();
+            let ledger = state.seeding.lock();
+            rows.iter().filter(|r| ledger.is_due(r, &settings)).collect()
+        };
+        for row in due {
+            if state.api.api_torrent_action_pause(row.id.into()).await.is_ok() {
+                let mut ledger = state.seeding.lock();
+                ledger.mark_done(&row.info_hash);
+                ledger.save_if_dirty(&state.paths.seeding_file());
+            }
+        }
     }
 
     fn announce_finished(&mut self, app: &AppHandle, state: &AppState, rows: &[TorrentRow]) {

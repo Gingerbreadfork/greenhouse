@@ -256,6 +256,8 @@ export const settings: Settings = {
   skip_types: ['exe', 'msi', 'bat', 'cmd', 'com', 'scr', 'vbs', 'ps1'],
   max_active_downloads: 3,
   max_active_seeds: 4,
+  seed_ratio_limit: 2,
+  seed_time_limit_minutes: 0,
   notify_on_done: true,
   packs: [
     {

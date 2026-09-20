@@ -89,6 +89,12 @@
     return typeof picked === 'string' ? picked : null;
   }
 
+  /** A positive number that may carry a fraction, or 0 when empty. */
+  function decimal(event: Event): number {
+    const value = Number((event.currentTarget as HTMLInputElement).value);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }
+
   function number(event: Event): number {
     const value = Number((event.currentTarget as HTMLInputElement).value);
     return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
@@ -227,6 +233,46 @@
           onchange={(e) => store.patchSettings({ max_active_seeds: number(e) })}
         />
         <span class="unit">at once</span>
+      </div>
+    </div>
+    <div class="field">
+      <div class="field-text">
+        <span class="label">Stop seeding at ratio</span>
+        <span class="hint">Pauses a torrent once it has uploaded this many times its size.</span>
+      </div>
+      <div class="rate">
+        <input
+          type="number"
+          min="0"
+          step="0.1"
+          value={settings.seed_ratio_limit || ''}
+          placeholder="Never"
+          aria-label="Upload ratio to stop seeding at"
+          onchange={(e) =>
+            store.patchSettings({ seed_ratio_limit: Math.round(decimal(e) * 100) / 100 })}
+        />
+        <span class="unit">ratio</span>
+      </div>
+    </div>
+    <div class="field">
+      <div class="field-text">
+        <span class="label">Stop seeding after</span>
+        <span class="hint">
+          Whichever limit comes first. Resume a stopped torrent and it keeps seeding.
+        </span>
+      </div>
+      <div class="rate">
+        <input
+          type="number"
+          min="0"
+          step="0.5"
+          value={settings.seed_time_limit_minutes ? settings.seed_time_limit_minutes / 60 : ''}
+          placeholder="Never"
+          aria-label="Hours to seed for"
+          onchange={(e) =>
+            store.patchSettings({ seed_time_limit_minutes: Math.round(decimal(e) * 60) })}
+        />
+        <span class="unit">hours</span>
       </div>
     </div>
   </section>

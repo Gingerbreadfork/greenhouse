@@ -65,6 +65,10 @@ pub struct Settings {
     // Queue. 0 means no limit.
     pub max_active_downloads: u32,
     pub max_active_seeds: u32,
+    /// Stop seeding at this upload ratio. 0 means never.
+    pub seed_ratio_limit: f64,
+    /// Stop seeding after this long. 0 means never.
+    pub seed_time_limit_minutes: u32,
 
     pub notify_on_done: bool,
     pub packs: Vec<TrackerPack>,
@@ -95,6 +99,8 @@ impl Default for Settings {
             skip_types: default_skip_types(),
             max_active_downloads: 0,
             max_active_seeds: 0,
+            seed_ratio_limit: 0.0,
+            seed_time_limit_minutes: 0,
             notify_on_done: true,
             packs: vec![starter_pack()],
         }
@@ -181,6 +187,11 @@ impl Paths {
     /// should end up once it finishes.
     pub fn pending_moves_file(&self) -> PathBuf {
         self.data_dir.join("incomplete.json")
+    }
+
+    /// Running upload and seeding-time totals for each torrent.
+    pub fn seeding_file(&self) -> PathBuf {
+        self.data_dir.join("seeding.json")
     }
 
     /// The downloaded copy of the peer blocklist the engine reads at launch.

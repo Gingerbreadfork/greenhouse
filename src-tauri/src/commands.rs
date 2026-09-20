@@ -11,6 +11,7 @@ use tauri::{Emitter, Manager};
 use tokio::sync::watch;
 
 use crate::engine::{self, SessionSummary, TorrentDetail, TorrentRow};
+use crate::seeding::SeedLedger;
 use crate::settings::{self, Paths, Settings};
 use crate::torrentsrc;
 
@@ -22,6 +23,7 @@ pub struct AppState {
     pub staged: Mutex<HashMap<String, Staged>>,
     /// Metadata lookups in flight, by staged token. Locked after `staged`.
     pub resolving: Mutex<HashMap<String, Resolving>>,
+    pub seeding: Mutex<SeedLedger>,
     pub bound_interface: Option<String>,
     pub blocklist_active: bool,
     pub startup_warnings: Vec<String>,
@@ -150,7 +152,14 @@ pub fn save_settings(state: tauri::State<'_, AppState>, next: Settings) -> CmdRe
 
 #[tauri::command]
 pub fn list_torrents(state: tauri::State<'_, AppState>) -> Vec<TorrentRow> {
-    engine::collect_rows(&state.session)
+    rows_with_totals(&state)
+}
+
+/// The torrent list, with upload figures that carry across restarts.
+pub fn rows_with_totals(state: &AppState) -> Vec<TorrentRow> {
+    let mut rows = engine::collect_rows(&state.session);
+    state.seeding.lock().overlay(&mut rows);
+    rows
 }
 
 #[tauri::command]
@@ -1187,6 +1196,7 @@ mod tests {
             paths,
             staged: Mutex::new(HashMap::new()),
             resolving: Mutex::new(HashMap::new()),
+            seeding: Mutex::new(SeedLedger::default()),
             bound_interface: None,
             blocklist_active: false,
             startup_warnings: vec![],

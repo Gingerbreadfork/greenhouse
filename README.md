@@ -88,6 +88,10 @@ without deleting files can be undone straight from the notification.
 **Queue.** Download a few at a time and seed a few at a time; the rest wait
 their turn. Torrents you paused yourself are never touched by the queue.
 
+**Seeding limits.** Stop seeding at a ratio, after a number of hours, or
+whichever comes first. Upload totals are kept across restarts, so the ratio
+you see is the real one.
+
 **Files.** Choose what to download before starting and change it later, with a
 filter for torrents that hold hundreds of files. Unfinished downloads can live
 in a separate folder and are moved to their real destination on completion.

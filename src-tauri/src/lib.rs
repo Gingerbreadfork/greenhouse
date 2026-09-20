@@ -1,6 +1,7 @@
 mod activation;
 mod commands;
 mod engine;
+mod seeding;
 mod supervisor;
 mod settings;
 mod torrentsrc;
@@ -58,6 +59,7 @@ pub fn run() {
             let engine = tauri::async_runtime::block_on(engine::build_session(&paths, &loaded))?;
             let session = engine.session;
             let api = Api::new(session.clone(), None);
+            let seeding = seeding::SeedLedger::load(&paths.seeding_file());
 
             app.manage(AppState {
                 session: session.clone(),
@@ -66,6 +68,7 @@ pub fn run() {
                 paths,
                 staged: Mutex::new(HashMap::new()),
                 resolving: Mutex::new(HashMap::new()),
+                seeding: Mutex::new(seeding),
                 bound_interface: engine.bound_interface,
                 blocklist_active: engine.blocklist_active,
                 startup_warnings: engine.warnings,
@@ -129,7 +132,7 @@ fn spawn_ticker(app: tauri::AppHandle, session: Arc<librqbit::Session>) {
             let _ = app.emit(
                 "greenhouse://tick",
                 Tick {
-                    torrents: engine::collect_rows(&session),
+                    torrents: commands::rows_with_totals(&state),
                     pending: commands::pending_adds(&state),
                     session: session_summary,
                 },
