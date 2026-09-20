@@ -107,6 +107,7 @@ export interface Settings {
   enable_upnp: boolean;
   transport: 'tcp' | 'utp' | 'both';
   peer_limit_per_torrent: number;
+  bind_interface: string;
   incomplete_dir: string;
   skip_types_enabled: boolean;
   skip_types: string[];
@@ -121,6 +122,14 @@ export interface Bootstrap {
   version: string;
   default_download_dir: string;
   home_dir: string;
+  /** The interface traffic is tied to for this run, if any. */
+  bound_interface: string | null;
+  warnings: string[];
+}
+
+export interface NetInterface {
+  name: string;
+  up: boolean;
 }
 
 export interface StagedFile {

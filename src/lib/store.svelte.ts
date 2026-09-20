@@ -41,6 +41,8 @@ class Store {
   version = $state('');
   homeDir = $state('');
   defaultDir = $state('');
+  /** The interface traffic is tied to for this run, if any. */
+  boundInterface = $state<string | null>(null);
 
   torrents = $state.raw<TorrentRow[]>([]);
   pending = $state.raw<PendingAdd[]>([]);
@@ -153,6 +155,8 @@ class Store {
     this.version = boot.version;
     this.homeDir = boot.home_dir;
     this.defaultDir = boot.default_download_dir;
+    this.boundInterface = boot.bound_interface;
+    for (const warning of boot.warnings) this.toast('Check your network settings', 'bad', warning);
     this.applyChrome();
     this.torrents = await api.listTorrents();
     this.ready = true;

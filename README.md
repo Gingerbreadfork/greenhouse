@@ -101,6 +101,10 @@ not when the app launches.
 **Network.** Port, UPnP, transport and per-torrent peer limits. Speed limits
 that apply the moment you set them. DHT and local peer discovery are on.
 
+**VPN kill switch.** Tie Greenhouse to one network interface and torrent
+traffic never falls back to your normal connection. If that interface is
+missing at launch, traffic is blocked rather than rerouted.
+
 **Desktop fit.** Registers as your system's magnet handler, with a second
 launch handing the link to the running window. Remembers its size and position.
 Desktop notification when a download finishes, with a button to test it.

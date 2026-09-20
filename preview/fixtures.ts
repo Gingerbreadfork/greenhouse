@@ -249,6 +249,7 @@ export const settings: Settings = {
   enable_upnp: true,
   transport: 'tcp',
   peer_limit_per_torrent: 0,
+  bind_interface: '',
   incomplete_dir: '/home/you/Downloads/.incomplete',
   skip_types_enabled: true,
   skip_types: ['exe', 'msi', 'bat', 'cmd', 'com', 'scr', 'vbs', 'ps1'],

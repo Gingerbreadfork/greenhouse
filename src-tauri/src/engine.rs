@@ -19,7 +19,66 @@ fn listener_mode(transport: &str) -> ListenerMode {
     }
 }
 
-pub async fn build_session(paths: &Paths, settings: &Settings) -> Result<Arc<Session>> {
+#[derive(Serialize)]
+pub struct NetInterface {
+    pub name: String,
+    pub up: bool,
+}
+
+/// The machine's network interfaces, apart from loopback.
+pub fn list_interfaces() -> Vec<NetInterface> {
+    let mut list: Vec<NetInterface> = std::fs::read_dir("/sys/class/net")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name != "lo")
+        .map(|name| {
+            let state = std::fs::read_to_string(format!("/sys/class/net/{name}/operstate"));
+            let up = !matches!(state.as_deref().map(str::trim), Ok("down") | Err(_));
+            NetInterface { name, up }
+        })
+        .collect();
+    list.sort_by(|a, b| a.name.cmp(&b.name));
+    list
+}
+
+fn interface_exists(name: &str) -> bool {
+    std::path::Path::new("/sys/class/net").join(name).exists()
+}
+
+/// The device to bind to, and a warning when the wanted one is missing. A
+/// missing interface falls back to loopback so nothing leaves the machine.
+fn choose_bind_device(
+    wanted: &str,
+    exists: impl Fn(&str) -> bool,
+) -> (Option<String>, Option<String>) {
+    let wanted = wanted.trim();
+    if wanted.is_empty() {
+        return (None, None);
+    }
+    if exists(wanted) {
+        return (Some(wanted.to_string()), None);
+    }
+    (
+        Some("lo".into()),
+        Some(format!(
+            "The network interface {wanted} is not available, so torrent traffic is blocked. \
+             Bring it up and restart Greenhouse."
+        )),
+    )
+}
+
+pub struct Engine {
+    pub session: Arc<Session>,
+    /// The interface traffic is tied to for this run, if any.
+    pub bound_interface: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+pub async fn build_session(paths: &Paths, settings: &Settings) -> Result<Engine> {
+    let (bind_device_name, bind_warning) =
+        choose_bind_device(&settings.bind_interface, interface_exists);
     let listen_addr: std::net::SocketAddr =
         (std::net::Ipv6Addr::UNSPECIFIED, settings.listen_port).into();
     let opts = SessionOptions {
@@ -27,6 +86,7 @@ pub async fn build_session(paths: &Paths, settings: &Settings) -> Result<Arc<Ses
             folder: Some(paths.session_dir()),
         }),
         fastresume: true,
+        bind_device_name: bind_device_name.clone(),
         peer_limit: (settings.peer_limit_per_torrent > 0)
             .then_some(settings.peer_limit_per_torrent as usize),
         listen: Some(ListenerOptions {
@@ -42,9 +102,14 @@ pub async fn build_session(paths: &Paths, settings: &Settings) -> Result<Arc<Ses
         client_name_and_version: Some(format!("Greenhouse {}", env!("CARGO_PKG_VERSION"))),
         ..Default::default()
     };
-    Session::new_with_opts(settings.download_dir.clone().into(), opts)
+    let session = Session::new_with_opts(settings.download_dir.clone().into(), opts)
         .await
-        .context("could not start the torrent session")
+        .context("could not start the torrent session")?;
+    Ok(Engine {
+        session,
+        bound_interface: bind_device_name,
+        warnings: bind_warning.into_iter().collect(),
+    })
 }
 
 pub fn kbps_to_bps(kbps: u32) -> Option<NonZeroU32> {
@@ -307,5 +372,25 @@ fn peer_stats_value(api: &Api, id: usize) -> serde_json::Value {
     match api.api_peer_stats(id.into(), filter) {
         Ok(stats) => serde_json::to_value(stats).unwrap_or_else(|_| serde_json::json!({})),
         Err(_) => serde_json::json!({}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_interface_falls_back_to_loopback() {
+        assert_eq!(choose_bind_device("", |_| false), (None, None));
+        assert_eq!(choose_bind_device(" wg0 ", |_| true), (Some("wg0".into()), None));
+
+        let (device, warning) = choose_bind_device("wg0", |_| false);
+        assert_eq!(device.as_deref(), Some("lo"));
+        assert!(warning.unwrap().contains("wg0"));
+    }
+
+    #[test]
+    fn loopback_is_not_offered_as_a_choice() {
+        assert!(list_interfaces().iter().all(|i| i.name != "lo"));
     }
 }

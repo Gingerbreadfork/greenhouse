@@ -52,6 +52,8 @@ pub struct Settings {
     pub enable_upnp: bool,
     pub transport: String,
     pub peer_limit_per_torrent: u32,
+    /// Network interface all traffic is tied to. Empty means any.
+    pub bind_interface: String,
 
     // Files
     pub incomplete_dir: String,
@@ -84,6 +86,7 @@ impl Default for Settings {
             enable_upnp: true,
             transport: "tcp".into(),
             peer_limit_per_torrent: 0,
+            bind_interface: String::new(),
             incomplete_dir: String::new(),
             skip_types_enabled: true,
             skip_types: default_skip_types(),

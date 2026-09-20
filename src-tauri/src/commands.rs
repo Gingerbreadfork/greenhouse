@@ -22,6 +22,8 @@ pub struct AppState {
     pub staged: Mutex<HashMap<String, Staged>>,
     /// Metadata lookups in flight, by staged token. Locked after `staged`.
     pub resolving: Mutex<HashMap<String, Resolving>>,
+    pub bound_interface: Option<String>,
+    pub startup_warnings: Vec<String>,
     pub http: reqwest::Client,
 }
 
@@ -106,6 +108,8 @@ pub struct Bootstrap {
     pub version: String,
     pub default_download_dir: String,
     pub home_dir: String,
+    pub bound_interface: Option<String>,
+    pub warnings: Vec<String>,
 }
 
 #[tauri::command]
@@ -118,7 +122,14 @@ pub fn bootstrap(state: tauri::State<'_, AppState>) -> Bootstrap {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned(),
+        bound_interface: state.bound_interface.clone(),
+        warnings: state.startup_warnings.clone(),
     }
+}
+
+#[tauri::command]
+pub fn list_interfaces() -> Vec<engine::NetInterface> {
+    engine::list_interfaces()
 }
 
 #[tauri::command]
@@ -1070,6 +1081,14 @@ mod tests {
 
     /// A mock app around a real engine. Offline, nothing leaves the machine.
     async fn test_app(name: &str, online: bool) -> tauri::App<tauri::test::MockRuntime> {
+        test_app_bound(name, online, None).await
+    }
+
+    async fn test_app_bound(
+        name: &str,
+        online: bool,
+        bind: Option<&str>,
+    ) -> tauri::App<tauri::test::MockRuntime> {
         let root = std::env::temp_dir().join(format!("gh-add-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let session = Session::new_with_opts(
@@ -1081,6 +1100,7 @@ mod tests {
                 }),
                 persistence: None,
                 listen: None,
+                bind_device_name: bind.map(str::to_string),
                 disable_local_service_discovery: true,
                 ..Default::default()
             },
@@ -1105,6 +1125,8 @@ mod tests {
             paths,
             staged: Mutex::new(HashMap::new()),
             resolving: Mutex::new(HashMap::new()),
+            bound_interface: None,
+            startup_warnings: vec![],
             http: reqwest::Client::new(),
         });
         app
@@ -1227,6 +1249,44 @@ mod tests {
             assert_eq!(engine::collect_rows(&state.session).len(), 1);
             assert!(state.staged.lock().is_empty());
             assert!(pending_adds(&state).is_empty());
+        });
+    }
+
+    /// Uses the network: tied to an interface that is up, adds still work.
+    #[test]
+    #[ignore]
+    fn a_live_interface_still_reaches_the_swarm() {
+        tauri::async_runtime::block_on(async {
+            let up = engine::list_interfaces().into_iter().find(|i| i.up).unwrap();
+            let app = test_app_bound("iface", true, Some(&up.name)).await;
+            let mut added = events(&app, "greenhouse://added");
+            let magnet = "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny";
+            let token = stage_magnet(&app, magnet.into()).await;
+            commit_staged(app.handle().clone(), app.state(), commit_request(&token))
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(90), added.recv())
+                .await
+                .unwrap_or_else(|_| panic!("no peer answered over {}", up.name));
+        });
+    }
+
+    /// Uses the network: tied to loopback, a well-seeded magnet finds nobody.
+    #[test]
+    #[ignore]
+    fn nothing_is_reached_when_bound_to_loopback() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app_bound("lo", true, Some("lo")).await;
+            let mut added = events(&app, "greenhouse://added");
+            let magnet = "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny";
+            let token = stage_magnet(&app, magnet.into()).await;
+            commit_staged(app.handle().clone(), app.state(), commit_request(&token))
+                .await
+                .unwrap();
+
+            let outcome = tokio::time::timeout(Duration::from_secs(20), added.recv()).await;
+            assert!(outcome.is_err(), "traffic left the machine: {outcome:?}");
+            assert_eq!(pending_adds(&app.state::<AppState>()).len(), 1);
         });
     }
 

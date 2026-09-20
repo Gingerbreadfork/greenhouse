@@ -18,8 +18,16 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
         settings: state.settings,
         version: '0.1.0',
         default_download_dir: '/home/you/Downloads',
-        home_dir: '/home/you'
+        home_dir: '/home/you',
+        bound_interface: null,
+        warnings: []
       } as T;
+    case 'list_interfaces':
+      return [
+        { name: 'enp8s0', up: true },
+        { name: 'wg0', up: true },
+        { name: 'wlan0', up: false }
+      ] as T;
     case 'save_settings':
       state.settings = args?.next;
       return state.settings as T;

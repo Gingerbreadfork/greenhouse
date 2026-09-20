@@ -5,6 +5,7 @@
   import { store } from '../store.svelte';
   import { api } from '../api';
   import { uptime } from '../format';
+  import type { NetInterface } from '../types';
 
   const settings = $derived(store.settings!);
 
@@ -32,6 +33,19 @@
   ];
 
   const isLight = $derived(store.resolvedTheme === 'light');
+
+  let interfaces = $state<NetInterface[]>([]);
+  api
+    .listInterfaces()
+    .then((list) => (interfaces = list))
+    .catch(() => {});
+
+  /** The saved interface stays selectable even while it is unplugged. */
+  const interfaceChoices = $derived(
+    !settings.bind_interface || interfaces.some((i) => i.name === settings.bind_interface)
+      ? interfaces
+      : [...interfaces, { name: settings.bind_interface, up: false }]
+  );
 
   async function chooseFolder(title: string): Promise<string | null> {
     const picked = await open({
@@ -282,6 +296,31 @@
           </button>
         {/each}
       </div>
+    </div>
+    <div class="field">
+      <div class="field-text">
+        <span class="label">Only use this network interface</span>
+        <span class="hint">
+          {#if store.boundInterface === 'lo' && settings.bind_interface}
+            {settings.bind_interface} was missing at start, so torrent traffic is blocked.
+          {:else if store.boundInterface}
+            Tied to {store.boundInterface} right now. If it goes down, nothing is sent elsewhere.
+          {:else}
+            Pick your VPN's interface and torrents never fall back to your normal connection.
+          {/if}
+        </span>
+      </div>
+      <select
+        class="picker"
+        aria-label="Network interface"
+        value={settings.bind_interface}
+        onchange={(e) => store.patchSettings({ bind_interface: e.currentTarget.value })}
+      >
+        <option value="">Any</option>
+        {#each interfaceChoices as i (i.name)}
+          <option value={i.name}>{i.name}{i.up ? '' : ' (down)'}</option>
+        {/each}
+      </select>
     </div>
     <div class="field">
       <div class="field-text">
@@ -565,6 +604,20 @@
   .rate input::-webkit-inner-spin-button { appearance: none; margin: 0; }
 
   .unit { font-size: 11.5px; color: var(--ink-faint); }
+
+  .picker {
+    flex: none;
+    height: 28px;
+    min-width: 132px;
+    padding: 0 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--ground);
+    color: var(--ink);
+    font-size: 12.5px;
+  }
+
+  .picker:focus { outline: none; border-color: var(--accent); }
 
   .wide {
     width: 100%;

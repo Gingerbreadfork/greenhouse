@@ -55,7 +55,8 @@ pub fn run() {
                 let _ = settings::save(&paths.settings_file(), &loaded);
             }
 
-            let session = tauri::async_runtime::block_on(engine::build_session(&paths, &loaded))?;
+            let engine = tauri::async_runtime::block_on(engine::build_session(&paths, &loaded))?;
+            let session = engine.session;
             let api = Api::new(session.clone(), None);
 
             app.manage(AppState {
@@ -65,6 +66,8 @@ pub fn run() {
                 paths,
                 staged: Mutex::new(HashMap::new()),
                 resolving: Mutex::new(HashMap::new()),
+                bound_interface: engine.bound_interface,
+                startup_warnings: engine.warnings,
                 http: reqwest::Client::builder()
                     .user_agent(concat!("Greenhouse/", env!("CARGO_PKG_VERSION")))
                     .timeout(Duration::from_secs(20))
@@ -78,6 +81,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
+            commands::list_interfaces,
             commands::save_settings,
             commands::list_torrents,
             commands::session_stats,
