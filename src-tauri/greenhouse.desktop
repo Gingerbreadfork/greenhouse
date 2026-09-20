@@ -10,4 +10,4 @@ Categories=Network;FileTransfer;P2P;
 MimeType=x-scheme-handler/magnet;application/x-bittorrent;
 Keywords=torrent;bittorrent;magnet;p2p;download;
 StartupNotify=true
-StartupWMClass=Greenhouse
+StartupWMClass=greenhouse
