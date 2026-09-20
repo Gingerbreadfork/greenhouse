@@ -192,6 +192,11 @@ impl Paths {
         self.data_dir.join("incomplete.json")
     }
 
+    /// Magnets that were confirmed but had no metadata yet when we last quit.
+    pub fn queued_file(&self) -> PathBuf {
+        self.data_dir.join("queued.json")
+    }
+
     /// Running upload and seeding-time totals for each torrent.
     pub fn seeding_file(&self) -> PathBuf {
         self.data_dir.join("seeding.json")

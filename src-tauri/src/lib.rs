@@ -80,6 +80,7 @@ pub fn run() {
                     .unwrap_or_default(),
             });
 
+            commands::restore_queue(app.handle());
             spawn_ticker(app.handle().clone(), session);
             refresh_stale_blocklist(app.handle().clone());
             watch::spawn(app.handle().clone());

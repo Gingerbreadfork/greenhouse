@@ -67,7 +67,8 @@ Before anything downloads you get the destination, the file list, and the
 tracker count. Magnet metadata resolves in the background while the rest of the
 sheet stays usable, so you can hit *Add* before it finishes. A magnet whose
 peers are slow to answer waits at the top of the list and is added the moment
-its details arrive; you can stop it from there at any time.
+its details arrive; you can stop it from there at any time. Waiting magnets
+are remembered when you quit and carry on looking at the next launch.
 
 **Watch folder.** Name a folder and any `.torrent` file saved into it is added
 with your defaults, then renamed so it is not picked up twice.

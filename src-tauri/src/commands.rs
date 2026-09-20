@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, Session};
@@ -39,7 +39,19 @@ pub struct Resolving {
 #[derive(Clone)]
 pub struct Queued {
     pub request: CommitRequest,
-    pub since: Instant,
+    pub since: SystemTime,
+}
+
+/// A queued add as it is kept on disk between runs.
+#[derive(Serialize, Deserialize)]
+struct QueuedRecord {
+    source: String,
+    name: Option<String>,
+    info_hash: Option<String>,
+    trackers: Vec<String>,
+    request: CommitRequest,
+    /// Seconds since 1970.
+    queued_at: u64,
 }
 
 #[derive(Clone)]
@@ -418,6 +430,7 @@ fn ensure_resolving<R: tauri::Runtime>(
             let _ = tx.send(Some(outcome.as_ref().map(|_| ()).map_err(String::clone)));
             if let Some(queued) = queued {
                 run_queued(&app, &state, &token, queued.request, outcome).await;
+                save_queue(&state);
             }
         }
     });
@@ -539,10 +552,78 @@ pub async fn resolve_staged<R: tauri::Runtime>(
 /// Drops a staged source, stopping its lookup and any add waiting on it.
 #[tauri::command]
 pub fn discard_staged(state: tauri::State<'_, AppState>, token: String) {
+    let was_queued = {
+        let mut staged = state.staged.lock();
+        let removed = staged.remove(&token);
+        if let Some(lookup) = state.resolving.lock().remove(&token) {
+            lookup.task.abort();
+        }
+        removed.is_some_and(|s| s.queued.is_some())
+    };
+    if was_queued {
+        save_queue(&state);
+    }
+}
+
+/// Writes the adds still waiting for metadata to disk, so quitting keeps them.
+fn save_queue(state: &AppState) {
+    let records: Vec<QueuedRecord> = state
+        .staged
+        .lock()
+        .values()
+        .filter_map(|s| {
+            let queued = s.queued.as_ref()?;
+            Some(QueuedRecord {
+                source: s.source.clone(),
+                name: s.name.clone(),
+                info_hash: s.info_hash.clone(),
+                trackers: s.trackers.clone(),
+                request: queued.request.clone(),
+                queued_at: queued
+                    .since
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            })
+        })
+        .collect();
+    if let Ok(text) = serde_json::to_string(&records) {
+        let _ = std::fs::write(state.paths.queued_file(), text);
+    }
+}
+
+/// Puts back the adds that were still waiting when Greenhouse last quit.
+pub fn restore_queue<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let state = app.state::<AppState>();
+    let records: Vec<QueuedRecord> = std::fs::read_to_string(state.paths.queued_file())
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+
     let mut staged = state.staged.lock();
-    staged.remove(&token);
-    if let Some(lookup) = state.resolving.lock().remove(&token) {
-        lookup.task.abort();
+    for record in records {
+        let token = uuid::Uuid::new_v4().to_string();
+        let kind = if record.source.starts_with("magnet:") { "magnet" } else { "url" };
+        staged.insert(
+            token.clone(),
+            Staged {
+                kind: kind.into(),
+                source: record.source,
+                bytes: None,
+                info_hash: record.info_hash,
+                name: record.name,
+                total_bytes: 0,
+                trackers: record.trackers,
+                files: Vec::new(),
+                skipped: Vec::new(),
+                resolved: false,
+                queued: Some(Queued {
+                    request: CommitRequest { token: token.clone(), ..record.request },
+                    since: UNIX_EPOCH + Duration::from_secs(record.queued_at),
+                }),
+            },
+        );
+        ensure_resolving(app, &state, &token);
     }
 }
 
@@ -566,7 +647,7 @@ pub fn pending_adds(state: &AppState) -> Vec<PendingAdd> {
                 token: token.clone(),
                 name: display_name(s),
                 info_hash: s.info_hash.clone(),
-                waiting_seconds: queued.since.elapsed().as_secs(),
+                waiting_seconds: queued.since.elapsed().unwrap_or_default().as_secs(),
             })
         })
         .collect();
@@ -582,7 +663,7 @@ fn display_name(staged: &Staged) -> String {
         .unwrap_or_else(|| staged.source.clone())
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct CommitRequest {
     pub token: String,
     pub download_dir: String,
@@ -610,7 +691,7 @@ pub async fn commit_staged<R: tauri::Runtime>(
     state: tauri::State<'_, AppState>,
     request: CommitRequest,
 ) -> CmdResult<CommitResult> {
-    let staged = {
+    let ready = {
         let mut map = state.staged.lock();
         let entry = map
             .get_mut(&request.token)
@@ -624,15 +705,22 @@ pub async fn commit_staged<R: tauri::Runtime>(
             };
             let token = request.token.clone();
             entry.queued = Some(Queued {
-                request,
-                since: Instant::now(),
+                request: request.clone(),
+                since: SystemTime::now(),
             });
             ensure_resolving(&app, &state, &token);
-            return Ok(result);
+            Err(result)
+        } else {
+            Ok(entry.clone())
         }
-        entry.clone()
     };
-    commit_resolved(&state, &staged, &request).await
+    match ready {
+        Ok(staged) => commit_resolved(&state, &staged, &request).await,
+        Err(pending) => {
+            save_queue(&state);
+            Ok(pending)
+        }
+    }
 }
 
 /// Adds a .torrent file with the saved defaults, as the add sheet would if
@@ -1360,6 +1448,36 @@ mod tests {
             assert_eq!(engine::collect_rows(&state.session).len(), 1);
             assert!(state.staged.lock().is_empty());
             assert!(pending_adds(&state).is_empty());
+        });
+    }
+
+    /// A magnet still waiting for peers comes back after a restart, with the
+    /// choices made for it, and stops coming back once it is cancelled.
+    #[test]
+    fn queued_magnets_survive_a_restart() {
+        tauri::async_runtime::block_on(async {
+            let first = test_app("queue-a", false).await;
+            let magnet =
+                format!("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Patient{QUIET_TRACKER}");
+            let token = stage_magnet(&first, magnet).await;
+            let mut request = commit_request(&token);
+            request.download_dir = "/somewhere/else".into();
+            commit_staged(first.handle().clone(), first.state(), request).await.unwrap();
+
+            let second = test_app("queue-b", false).await;
+            let (from, to) = (first.state::<AppState>(), second.state::<AppState>());
+            std::fs::copy(from.paths.queued_file(), to.paths.queued_file()).unwrap();
+            restore_queue(second.handle());
+
+            let pending = pending_adds(&to);
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].name, "Patient");
+            assert_eq!(to.resolving.lock().len(), 1);
+            let kept = to.staged.lock()[&pending[0].token].queued.clone().unwrap();
+            assert_eq!(kept.request.download_dir, "/somewhere/else");
+
+            discard_staged(second.state(), pending[0].token.clone());
+            assert_eq!(std::fs::read_to_string(to.paths.queued_file()).unwrap(), "[]");
         });
     }
 
