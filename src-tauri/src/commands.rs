@@ -147,6 +147,12 @@ pub fn bootstrap(state: tauri::State<'_, AppState>) -> Bootstrap {
     }
 }
 
+/// Bytes free on the volume a folder is on, or will be on once it exists.
+#[tauri::command]
+pub fn free_space(path: String) -> Option<u64> {
+    settings::free_space(std::path::Path::new(path.trim()))
+}
+
 #[tauri::command]
 pub fn list_interfaces() -> Vec<engine::NetInterface> {
     engine::list_interfaces()

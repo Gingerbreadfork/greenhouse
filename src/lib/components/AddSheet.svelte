@@ -57,6 +57,20 @@
   const includedBytes = $derived(included.reduce((sum, f) => sum + f.length, 0));
   const totalBytes = $derived(info.total_bytes || includedBytes);
 
+  /** Bytes free where the download is first written, once measured. */
+  let freeBytes = $state<number | null>(null);
+  const neededBytes = $derived(includedBytes || totalBytes);
+  const tooBig = $derived(freeBytes !== null && neededBytes > freeBytes);
+
+  function measureSpace() {
+    const folder = settings.incomplete_dir || downloadDir;
+    api
+      .freeSpace(folder)
+      .then((free) => (freeBytes = free))
+      .catch(() => (freeBytes = null));
+  }
+  measureSpace();
+
   const kindLabel = $derived(
     info.kind === 'magnet' ? 'Magnet link' : info.kind === 'url' ? 'Torrent URL' : 'Torrent file'
   );
@@ -101,7 +115,10 @@
       defaultPath: downloadDir || store.homeDir,
       title: 'Choose where to save'
     });
-    if (typeof picked === 'string') downloadDir = picked;
+    if (typeof picked === 'string') {
+      downloadDir = picked;
+      measureSpace();
+    }
   }
 
   async function add() {
@@ -158,9 +175,23 @@
   <section class="block">
     <h3>Save to</h3>
     <div class="path">
-      <input bind:value={downloadDir} spellcheck="false" aria-label="Download folder" />
+      <input
+        bind:value={downloadDir}
+        onchange={measureSpace}
+        spellcheck="false"
+        aria-label="Download folder"
+      />
       <button class="mini" onclick={chooseFolder}>Choose…</button>
     </div>
+    {#if tooBig && freeBytes !== null}
+      <p class="room short">
+        <Icon name="alert" size={13} />
+        This needs {bytes(neededBytes)} and only {bytes(freeBytes)} is free
+        {settings.incomplete_dir ? 'in the unfinished downloads folder' : 'there'}.
+      </p>
+    {:else if freeBytes !== null}
+      <p class="room">{bytes(freeBytes)} free</p>
+    {/if}
   </section>
 
   <section class="block">
@@ -479,6 +510,23 @@
     font-size: 12px;
     line-height: 1.5;
     color: var(--ink-dim);
+  }
+
+  .room {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin: 7px 0 0;
+    font-size: 11px;
+    color: var(--ink-faint);
+  }
+
+  .room.short {
+    padding: 8px 10px;
+    border-radius: var(--r-md);
+    background: var(--alarm-wash);
+    color: var(--alarm);
+    font-size: 11.5px;
   }
 
   .failed {

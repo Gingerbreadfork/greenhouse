@@ -97,6 +97,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
             commands::list_interfaces,
+            commands::free_space,
             commands::blocklist_status,
             commands::refresh_blocklist,
             commands::save_settings,

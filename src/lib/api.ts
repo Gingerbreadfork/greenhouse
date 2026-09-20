@@ -17,6 +17,7 @@ import type {
 
 export const api = {
   bootstrap: () => invoke<Bootstrap>('bootstrap'),
+  freeSpace: (path: string) => invoke<number | null>('free_space', { path }),
   listInterfaces: () => invoke<NetInterface[]>('list_interfaces'),
   blocklistStatus: () => invoke<BlocklistStatus>('blocklist_status'),
   refreshBlocklist: () => invoke<BlocklistStatus>('refresh_blocklist'),

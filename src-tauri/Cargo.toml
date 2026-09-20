@@ -36,6 +36,7 @@ gtk = "0.18"
 axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
 tokio-util = { version = "0.7", features = ["io"] }
 roxmltree = "0.20"
+libc = "0.2"
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }

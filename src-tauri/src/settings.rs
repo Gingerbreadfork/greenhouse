@@ -335,6 +335,20 @@ impl Settings {
     }
 }
 
+/// Bytes free to us on the volume that holds `path`, measured at the nearest
+/// folder that already exists.
+pub fn free_space(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let existing = path.ancestors().find(|p| p.exists())?;
+    let c_path = std::ffi::CString::new(existing.as_os_str().as_bytes()).ok()?;
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::zeroed();
+    if unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let stat = unsafe { stat.assume_init() };
+    Some(stat.f_bavail as u64 * stat.f_frsize as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,6 +378,15 @@ mod tests {
     fn skipping_can_be_turned_off() {
         let s = Settings { skip_types_enabled: false, ..settings() };
         assert!(!s.is_skipped("setup.exe"));
+    }
+
+    #[test]
+    fn free_space_is_measured_where_a_new_folder_would_go() {
+        let tmp = std::env::temp_dir();
+        let here = free_space(&tmp).unwrap();
+        assert!(here > 0);
+        assert!(free_space(&tmp.join("not/made/yet")).is_some());
+        assert_eq!(free_space(Path::new("")), None);
     }
 
     #[test]
