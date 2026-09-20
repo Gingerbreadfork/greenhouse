@@ -876,6 +876,8 @@ pub struct CommitResult {
     pub name: String,
     pub tracker_count: usize,
     pub pending: bool,
+    /// The torrent was in the session already, so nothing new was added.
+    pub already: bool,
 }
 
 /// Adds a staged source. Without metadata yet, the add is queued behind the
@@ -897,6 +899,7 @@ pub async fn commit_staged<R: tauri::Runtime>(
                 name: display_name(entry),
                 tracker_count: commit_trackers(&state, entry, &request).len(),
                 pending: true,
+                already: false,
             };
             let token = request.token.clone();
             entry.queued = Some(Queued {
@@ -1027,9 +1030,9 @@ async fn commit_resolved(
         .add_torrent(add, Some(opts))
         .await
         .map_err(err)?;
-    let (id, handle) = match response {
-        AddTorrentResponse::Added(id, handle) => (id, handle),
-        AddTorrentResponse::AlreadyManaged(id, handle) => (id, handle),
+    let (id, handle, already) = match response {
+        AddTorrentResponse::Added(id, handle) => (id, handle, false),
+        AddTorrentResponse::AlreadyManaged(id, handle) => (id, handle, true),
         AddTorrentResponse::ListOnly(_) => return Err("engine returned no torrent".into()),
     };
 
@@ -1038,7 +1041,8 @@ async fn commit_resolved(
         let path = state.paths.source_file(&info_hash);
         let _ = tokio::fs::write(path, bytes).await;
     }
-    if let Some(destination) = pending_final {
+    // A torrent that was here already keeps the folder it has.
+    if let Some(destination) = pending_final.filter(|_| !already) {
         let file = state.paths.pending_moves_file();
         let mut moves = settings::load_pending_moves(&file);
         moves.insert(info_hash, destination);
@@ -1053,6 +1057,7 @@ async fn commit_resolved(
             .unwrap_or_else(|| handle.info_hash().as_string()),
         tracker_count: trackers.len(),
         pending: false,
+        already,
     })
 }
 
@@ -1860,6 +1865,43 @@ mod tests {
 
             discard_staged(second.state(), pending[0].token.clone());
             assert_eq!(std::fs::read_to_string(to.paths.queued_file()).unwrap(), "[]");
+        });
+    }
+
+    /// Adding a torrent that is already in the session says so, and does not
+    /// schedule its files to be moved somewhere new.
+    #[test]
+    fn adding_a_torrent_twice_is_reported_not_repeated() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("twice", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let payload = root.join("payload");
+            std::fs::create_dir_all(&payload).unwrap();
+            std::fs::write(payload.join("a.bin"), b"some bytes").unwrap();
+            let torrent = librqbit::create_torrent(
+                &payload,
+                librqbit::CreateTorrentOptions { name: None, trackers: vec![], piece_length: None },
+                &librqbit::spawn_utils::BlockingSpawner::new(1),
+            )
+            .await
+            .unwrap()
+            .as_bytes()
+            .unwrap();
+            state.settings.write().start_paused = true;
+
+            let first = add_file_with_defaults(&state, "a".into(), torrent.clone()).await.unwrap();
+            assert!(!first.already);
+
+            state.settings.write().incomplete_dir = root.join("partial").to_string_lossy().into_owned();
+            let second = add_file_with_defaults(&state, "a".into(), torrent).await.unwrap();
+            assert!(second.already);
+            assert_eq!(second.id, first.id);
+            assert_eq!(engine::collect_rows(&state.session).len(), 1);
+            assert!(settings::load_pending_moves(&state.paths.pending_moves_file()).is_empty());
         });
     }
 

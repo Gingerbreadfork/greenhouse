@@ -74,7 +74,8 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
         id: 99,
         name: 'ubuntu-24.04.1-desktop-amd64.iso',
         tracker_count: 15,
-        pending: false
+        pending: false,
+        already: false
       } as T;
     case 'apply_trackers':
       return { id: args?.id, tracker_count: 20, added: 6 } as T;

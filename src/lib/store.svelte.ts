@@ -179,10 +179,7 @@ class Store {
 
   /** Adds that finish in the background report back here. */
   private async watchPendingAdds() {
-    await listen<CommitResult>('greenhouse://added', (event) => {
-      this.refresh();
-      this.toast(`Added ${event.payload.name}`, 'good', trackerNote(event.payload.tracker_count));
-    });
+    await listen<CommitResult>('greenhouse://added', (event) => this.announceAdd(event.payload));
     await listen<{ name: string | null; error: string }>('greenhouse://add-failed', (event) => {
       this.toast(
         `Could not add ${event.payload.name ?? 'that magnet link'}`,
@@ -190,6 +187,24 @@ class Store {
         event.payload.error
       );
     });
+  }
+
+  /** Says what became of an add: queued, already here, or added. */
+  announceAdd(result: CommitResult) {
+    if (result.pending) {
+      this.toast(
+        `Looking for ${result.name}`,
+        'info',
+        'It will be added as soon as a peer sends its details'
+      );
+      return;
+    }
+    this.refresh();
+    if (result.already) {
+      this.toast(`${result.name} is already in your list`, 'info');
+      return;
+    }
+    this.toast(`Added ${result.name}`, 'good', trackerNote(result.tracker_count));
   }
 
   async cancelPending(token: string) {
@@ -346,7 +361,7 @@ function push(series: number[], value: number): number[] {
   return next;
 }
 
-export function trackerNote(count: number): string {
+function trackerNote(count: number): string {
   return count > 0 ? `${count} trackers attached` : 'No trackers attached, so it will rely on DHT';
 }
 

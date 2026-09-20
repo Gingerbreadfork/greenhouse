@@ -21,8 +21,8 @@
   import Icon from './lib/components/Icon.svelte';
 
   import { api } from './lib/api';
-  import { store, trackerNote } from './lib/store.svelte';
-  import type { CommitResult, RestoreToken, StagedInfo, TorrentRow } from './lib/types';
+  import { store } from './lib/store.svelte';
+  import type { RestoreToken, StagedInfo, TorrentRow } from './lib/types';
 
   let staged = $state<StagedInfo | null>(null);
   let staging = $state(false);
@@ -75,24 +75,11 @@
             ? info.files.filter((f) => !info.skipped.includes(f.index)).map((f) => f.index)
             : null
       });
-      announce(result);
+      store.announceAdd(result);
     } catch (e) {
       api.discardStaged(info.token).catch(() => {});
       store.toast(`Could not add ${info.name ?? 'that torrent'}`, 'bad', String(e));
     }
-  }
-
-  function announce(result: CommitResult) {
-    if (result.pending) {
-      store.toast(
-        `Looking for ${result.name}`,
-        'info',
-        'It will be added as soon as a peer sends its details'
-      );
-      return;
-    }
-    store.refresh();
-    store.toast(`Added ${result.name}`, 'good', trackerNote(result.tracker_count));
   }
 
   async function pickFiles() {
@@ -377,7 +364,7 @@
       onclose={() => (staged = null)}
       ondone={(result) => {
         staged = null;
-        announce(result);
+        store.announceAdd(result);
       }}
     />
   {/key}

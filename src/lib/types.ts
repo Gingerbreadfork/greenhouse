@@ -210,6 +210,8 @@ export interface CommitResult {
   name: string;
   tracker_count: number;
   pending: boolean;
+  /** The torrent was in the list already, so nothing new was added. */
+  already: boolean;
 }
 
 /** A confirmed add that is still waiting for peers to send its metadata. */
