@@ -109,6 +109,10 @@ in a separate folder and are moved to their real destination on completion.
 mpv, VLC or the player you name, before the download is done. The part being
 watched is fetched first, so you can start a film seconds after adding it.
 
+**Activity.** A dated record of what was added, finished, moved, stopped
+seeding or failed, and what asked for it: you, a feed, the watch folder or a
+magnet that waited for peers.
+
 **Watching.** A per-torrent inspector with progress, peers, per-file progress
 and trackers. A live throughput graph that starts when the first byte moves,
 not when the app launches.

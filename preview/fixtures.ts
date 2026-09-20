@@ -407,3 +407,15 @@ export const feedStatus = {
     ]
   }
 };
+
+const ago = (minutes: number) => Math.floor(Date.now() / 1000) - minutes * 60;
+
+export const activity = [
+  { at: ago(4), kind: 'added', title: 'archlinux-2026.09.01-x86_64.iso', detail: 'Added from the feed Arch Linux releases' },
+  { at: ago(38), kind: 'finished', title: 'debian-13.1.0-amd64-netinst.iso', detail: null },
+  { at: ago(39), kind: 'moved', title: 'debian-13.1.0-amd64-netinst.iso', detail: 'Moved to /home/you/Downloads' },
+  { at: ago(180), kind: 'stopped', title: 'LibriVox — The Wind in the Willows (audiobook, FLAC)', detail: 'Reached a ratio of 2' },
+  { at: ago(60 * 26), kind: 'failed', title: 'broken-upload.torrent', detail: 'error decoding the torrent file' },
+  { at: ago(60 * 27), kind: 'added', title: 'Cosmos Laundromat — open movie source files', detail: 'Added from the watch folder' },
+  { at: ago(60 * 75), kind: 'added', title: 'ubuntu-24.04.1-desktop-amd64.iso', detail: 'Added by you' }
+];

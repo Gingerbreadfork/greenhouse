@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
 
+use crate::activity;
 use crate::commands::{forget_inner, restore_inner, AppState, RestoreToken};
 use crate::engine::TorrentRow;
 use crate::settings;
@@ -40,7 +41,7 @@ impl Supervisor {
         self.announce_finished(app, state, rows);
         self.move_finished(app, state, rows).await;
         self.track_seeding(state, rows);
-        self.enforce_seed_limits(state, rows).await;
+        self.enforce_seed_limits(app, state, rows).await;
         self.enforce_queue(state, rows).await;
     }
 
@@ -61,17 +62,27 @@ impl Supervisor {
     }
 
     /// Pauses seeding torrents that have reached the ratio or time limit.
-    async fn enforce_seed_limits(&mut self, state: &AppState, rows: &[TorrentRow]) {
-        let due: Vec<&TorrentRow> = {
+    async fn enforce_seed_limits(
+        &mut self,
+        app: &AppHandle,
+        state: &AppState,
+        rows: &[TorrentRow],
+    ) {
+        let due: Vec<(&TorrentRow, String)> = {
             let settings = state.settings.read();
             let ledger = state.seeding.lock();
-            rows.iter().filter(|r| ledger.is_due(r, &settings)).collect()
+            rows.iter()
+                .filter_map(|r| Some((r, ledger.limit_reached(r, &settings)?)))
+                .collect()
         };
-        for row in due {
+        for (row, reason) in due {
             if state.api.api_torrent_action_pause(row.id.into()).await.is_ok() {
-                let mut ledger = state.seeding.lock();
-                ledger.mark_done(&row.info_hash);
-                ledger.save_if_dirty(&state.paths.seeding_file());
+                {
+                    let mut ledger = state.seeding.lock();
+                    ledger.mark_done(&row.info_hash);
+                    ledger.save_if_dirty(&state.paths.seeding_file());
+                }
+                activity::record(app, "stopped", row.name.clone(), Some(reason));
             }
         }
     }
@@ -82,6 +93,7 @@ impl Supervisor {
             if !self.announced.insert(row.info_hash.clone()) {
                 continue;
             }
+            activity::record(app, "finished", row.name.clone(), None);
             if notify {
                 let _ = app
                     .notification()
@@ -139,8 +151,14 @@ impl Supervisor {
             .unwrap_or_else(|e| Err(anyhow::anyhow!("{e}")));
 
             let landed = match moved {
-                Ok(()) => to.to_string_lossy().into_owned(),
+                Ok(()) => {
+                    let place = to.to_string_lossy().into_owned();
+                    activity::record(app, "moved", row.name.clone(), Some(format!("Moved to {place}")));
+                    place
+                }
                 Err(e) => {
+                    let why = format!("Could not be moved to {}: {e}", to.display());
+                    activity::record(app, "failed", row.name.clone(), Some(why));
                     let _ = app
                         .notification()
                         .builder()

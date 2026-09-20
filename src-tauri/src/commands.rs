@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 use tokio::sync::watch;
 
+use crate::activity::{self, ActivityLog};
 use crate::engine::{self, SessionSummary, TorrentDetail, TorrentRow};
 use crate::feeds::{self, FeedStatus, FeedsState};
 use crate::seeding::SeedLedger;
@@ -27,6 +28,7 @@ pub struct AppState {
     pub resolving: Mutex<HashMap<String, Resolving>>,
     pub seeding: Mutex<SeedLedger>,
     pub feeds: Mutex<FeedsState>,
+    pub activity: Mutex<ActivityLog>,
     /// Serves files to a media player while they download.
     pub stream: Option<StreamServer>,
     pub bound_interface: Option<String>,
@@ -45,6 +47,8 @@ pub struct Resolving {
 pub struct Queued {
     pub request: CommitRequest,
     pub since: SystemTime,
+    /// What asked for this add, when it was not you in the add sheet.
+    pub origin: Option<String>,
 }
 
 /// A queued add as it is kept on disk between runs.
@@ -57,6 +61,8 @@ struct QueuedRecord {
     request: CommitRequest,
     /// Seconds since 1970.
     queued_at: u64,
+    #[serde(default)]
+    origin: Option<String>,
 }
 
 #[derive(Clone)]
@@ -518,6 +524,7 @@ pub fn queue_with_defaults<R: tauri::Runtime>(
     source: String,
     name: Option<String>,
     download_dir: Option<String>,
+    origin: Option<String>,
 ) -> CmdResult<()> {
     let state = app.state::<AppState>();
     let mut entry = staged_from_text(&source)?;
@@ -539,6 +546,7 @@ pub fn queue_with_defaults<R: tauri::Runtime>(
     entry.queued = Some(Queued {
         request,
         since: SystemTime::now(),
+        origin,
     });
     {
         let mut staged = state.staged.lock();
@@ -630,7 +638,7 @@ fn ensure_resolving<R: tauri::Runtime>(
             let queued = finish_lookup(&state, &token, &outcome);
             let _ = tx.send(Some(outcome.as_ref().map(|_| ()).map_err(String::clone)));
             if let Some(queued) = queued {
-                run_queued(&app, &state, &token, queued.request, outcome).await;
+                run_queued(&app, &state, &token, queued, outcome).await;
                 save_queue(&state);
             }
         }
@@ -698,9 +706,10 @@ async fn run_queued<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     state: &AppState,
     token: &str,
-    mut request: CommitRequest,
+    queued: Queued,
     outcome: CmdResult<Staged>,
 ) {
+    let mut request = queued.request;
     let result = match outcome {
         Ok(staged) => {
             if request.selected_files.is_none() {
@@ -712,13 +721,34 @@ async fn run_queued<R: tauri::Runtime>(
     };
     match result {
         Ok(added) => {
+            let via = queued.origin.unwrap_or_else(|| "Added once a peer answered".into());
+            record_add(app, &added, via);
             let _ = app.emit("greenhouse://added", added);
         }
         Err(error) => {
             let name = state.staged.lock().remove(token).and_then(|s| s.name);
+            let title = name.clone().unwrap_or_else(|| "A magnet link".into());
+            activity::record(app, "failed", title, Some(error.clone()));
             let _ = app.emit("greenhouse://add-failed", AddFailed { name, error });
         }
     }
+}
+
+/// Notes a finished add in the activity log, unless nothing new was added.
+pub fn record_add<R: tauri::Runtime>(app: &tauri::AppHandle<R>, added: &CommitResult, via: String) {
+    if !added.already && !added.pending {
+        activity::record(app, "added", added.name.clone(), Some(via));
+    }
+}
+
+#[tauri::command]
+pub fn activity_list(state: tauri::State<'_, AppState>) -> Vec<activity::Entry> {
+    state.activity.lock().list()
+}
+
+#[tauri::command]
+pub fn clear_activity(state: tauri::State<'_, AppState>) {
+    state.activity.lock().clear();
 }
 
 #[tauri::command]
@@ -785,6 +815,7 @@ fn save_queue(state: &AppState) {
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
+                origin: queued.origin.clone(),
             })
         })
         .collect();
@@ -821,6 +852,7 @@ pub fn restore_queue<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 queued: Some(Queued {
                     request: CommitRequest { token: token.clone(), ..record.request },
                     since: UNIX_EPOCH + Duration::from_secs(record.queued_at),
+                    origin: record.origin,
                 }),
             },
         );
@@ -911,6 +943,7 @@ pub async fn commit_staged<R: tauri::Runtime>(
             entry.queued = Some(Queued {
                 request: request.clone(),
                 since: SystemTime::now(),
+                origin: None,
             });
             ensure_resolving(&app, &state, &token);
             Err(result)
@@ -919,7 +952,11 @@ pub async fn commit_staged<R: tauri::Runtime>(
         }
     };
     match ready {
-        Ok(staged) => commit_resolved(&state, &staged, &request).await,
+        Ok(staged) => {
+            let added = commit_resolved(&state, &staged, &request).await?;
+            record_add(&app, &added, "Added by you".into());
+            Ok(added)
+        }
         Err(pending) => {
             save_queue(&state);
             Ok(pending)
@@ -1530,6 +1567,7 @@ mod tests {
             resolving: Mutex::new(HashMap::new()),
             seeding: Mutex::new(SeedLedger::default()),
             feeds: Mutex::new(FeedsState::default()),
+            activity: Mutex::new(ActivityLog::load(root.join("activity.json"))),
             stream: None,
             bound_interface: None,
             blocklist_active: false,
@@ -1626,6 +1664,8 @@ mod tests {
                 .unwrap();
             assert!(payload.contains("Nowhere"), "{payload}");
             let state = app.state::<AppState>();
+            let log = state.activity.lock().list();
+            assert_eq!((log[0].kind.as_str(), log[0].title.as_str()), ("failed", "Nowhere"));
             assert!(state.staged.lock().is_empty());
             assert!(state.resolving.lock().is_empty());
         });
@@ -1956,6 +1996,11 @@ mod tests {
             assert!(added.try_recv().is_ok());
             assert!(added.try_recv().is_err(), "added twice");
             assert!(failed.try_recv().unwrap().contains("broken.torrent"));
+            let log = state.activity.lock().list();
+            assert_eq!(log.len(), 2);
+            assert_eq!(log[0].kind, "added");
+            assert_eq!(log[0].detail.as_deref(), Some("Added from the watch folder"));
+            assert_eq!((log[1].kind.as_str(), log[1].title.as_str()), ("failed", "broken.torrent"));
             assert!(watch.join("hello.torrent.added").exists());
             assert!(watch.join("broken.torrent.failed").exists());
             assert!(!watch.join("hello.torrent").exists());

@@ -134,6 +134,14 @@ export interface Bootstrap {
   warnings: string[];
 }
 
+export interface ActivityEntry {
+  /** Seconds since 1970. */
+  at: number;
+  kind: 'added' | 'failed' | 'finished' | 'stopped' | 'moved';
+  title: string;
+  detail: string | null;
+}
+
 export interface Feed {
   id: string;
   name: string;

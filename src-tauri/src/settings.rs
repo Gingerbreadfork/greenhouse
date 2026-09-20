@@ -200,6 +200,11 @@ impl Paths {
         self.data_dir.join("incomplete.json")
     }
 
+    /// The record of what Greenhouse has done.
+    pub fn activity_file(&self) -> PathBuf {
+        self.data_dir.join("activity.json")
+    }
+
     /// Feed items that have already been dealt with.
     pub fn feeds_file(&self) -> PathBuf {
         self.data_dir.join("feeds.json")

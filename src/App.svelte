@@ -12,6 +12,7 @@
   import StatsView from './lib/components/StatsView.svelte';
   import AboutView from './lib/components/AboutView.svelte';
   import AddSheet from './lib/components/AddSheet.svelte';
+  import Activity from './lib/components/Activity.svelte';
   import Feeds from './lib/components/Feeds.svelte';
   import BulkTrackers from './lib/components/BulkTrackers.svelte';
   import RemoveDialog from './lib/components/RemoveDialog.svelte';
@@ -343,6 +344,8 @@
       {#if store.settings}<TrackerPacks />{/if}
     {:else if store.view === 'feeds'}
       {#if store.settings}<Feeds />{/if}
+    {:else if store.view === 'activity'}
+      <Activity />
     {:else if store.view === 'stats'}
       <StatsView />
     {:else if store.view === 'settings'}

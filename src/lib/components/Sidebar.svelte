@@ -71,6 +71,19 @@
     <li>
       <button
         class="item"
+        class:on={store.view === 'activity'}
+        onclick={() => store.openActivity()}
+      >
+        <Icon name="history" size={15} />
+        <span class="label">Activity</span>
+        {#if store.unseenActivity > 0}
+          <span class="dot" title="Something happened since you last looked"></span>
+        {/if}
+      </button>
+    </li>
+    <li>
+      <button
+        class="item"
         class:on={store.view === 'stats'}
         onclick={() => (store.view = 'stats')}
       >

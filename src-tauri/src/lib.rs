@@ -1,4 +1,5 @@
 mod activation;
+mod activity;
 mod commands;
 mod engine;
 mod feeds;
@@ -64,6 +65,7 @@ pub fn run() {
             let api = Api::new(session.clone(), None);
             let seeding = seeding::SeedLedger::load(&paths.seeding_file());
             let feeds = feeds::FeedsState::load(&paths.feeds_file());
+            let activity = activity::ActivityLog::load(paths.activity_file());
             let stream = tauri::async_runtime::block_on(stream::start(api.clone())).ok();
 
             app.manage(AppState {
@@ -75,6 +77,7 @@ pub fn run() {
                 resolving: Mutex::new(HashMap::new()),
                 seeding: Mutex::new(seeding),
                 feeds: Mutex::new(feeds),
+                activity: Mutex::new(activity),
                 stream,
                 bound_interface: engine.bound_interface,
                 blocklist_active: engine.blocklist_active,
@@ -107,6 +110,8 @@ pub fn run() {
             commands::torrent_action,
             commands::set_file_selection,
             commands::play_file,
+            commands::activity_list,
+            commands::clear_activity,
             commands::feeds_status,
             commands::check_feed,
             commands::add_feed_item,

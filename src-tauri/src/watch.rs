@@ -6,7 +6,8 @@ use std::time::Duration;
 use bytes::Bytes;
 use tauri::{Emitter, Manager, Runtime};
 
-use crate::commands::{add_file_with_defaults, AddFailed, AppState};
+use crate::activity;
+use crate::commands::{add_file_with_defaults, record_add, AddFailed, AppState};
 
 const EVERY: Duration = Duration::from_secs(5);
 /// A file this fresh may still be being written.
@@ -41,10 +42,12 @@ pub async fn scan<R: Runtime>(app: &tauri::AppHandle<R>, settle: Duration) {
         };
         let suffix = match added {
             Ok(result) => {
+                record_add(app, &result, "Added from the watch folder".into());
                 let _ = app.emit("greenhouse://added", result);
                 "added"
             }
             Err(error) => {
+                activity::record(app, "failed", name.clone(), Some(error.clone()));
                 let _ = app.emit("greenhouse://add-failed", AddFailed { name: Some(name), error });
                 "failed"
             }

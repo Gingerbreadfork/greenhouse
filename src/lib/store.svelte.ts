@@ -1,8 +1,22 @@
 import { listen } from '@tauri-apps/api/event';
 import { api } from './api';
-import type { CommitResult, PendingAdd, SessionSummary, Settings, TorrentRow } from './types';
+import type {
+  ActivityEntry,
+  CommitResult,
+  PendingAdd,
+  SessionSummary,
+  Settings,
+  TorrentRow
+} from './types';
 
-export type View = 'torrents' | 'trackers' | 'feeds' | 'stats' | 'settings' | 'about';
+export type View =
+  | 'torrents'
+  | 'trackers'
+  | 'feeds'
+  | 'activity'
+  | 'stats'
+  | 'settings'
+  | 'about';
 export type Filter = 'all' | 'downloading' | 'seeding' | 'paused' | 'finished' | 'issues';
 export type SortKey = 'added' | 'name' | 'progress' | 'size' | 'down' | 'up' | 'ratio';
 
@@ -46,6 +60,10 @@ class Store {
 
   torrents = $state.raw<TorrentRow[]>([]);
   pending = $state.raw<PendingAdd[]>([]);
+  /** What Greenhouse has done, newest first. */
+  activity = $state.raw<ActivityEntry[]>([]);
+  /** Entries that arrived while the activity view was not open. */
+  unseenActivity = $state(0);
   session = $state.raw<SessionSummary>(EMPTY_SESSION);
   settings = $state<Settings | null>(null);
 
@@ -175,6 +193,21 @@ class Store {
       }
     );
     await this.watchPendingAdds();
+    this.activity = await api.activityList();
+    await listen<ActivityEntry>('greenhouse://activity', (event) => {
+      this.activity = [event.payload, ...this.activity];
+      if (this.view !== 'activity') this.unseenActivity += 1;
+    });
+  }
+
+  openActivity() {
+    this.view = 'activity';
+    this.unseenActivity = 0;
+  }
+
+  async clearActivity() {
+    await api.clearActivity();
+    this.activity = [];
   }
 
   /** Adds that finish in the background report back here. */

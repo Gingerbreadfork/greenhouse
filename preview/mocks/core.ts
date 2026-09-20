@@ -1,4 +1,4 @@
-import { detail, feedStatus, filmFiles, session, settings, torrents } from '../fixtures';
+import { activity, detail, feedStatus, filmFiles, session, settings, torrents } from '../fixtures';
 
 const empty = typeof location !== 'undefined' && location.search.includes('empty');
 let live = empty ? [] : torrents.map((t) => ({ ...t }));
@@ -22,6 +22,10 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
         bound_interface: null,
         warnings: []
       } as T;
+    case 'activity_list':
+      return activity as T;
+    case 'clear_activity':
+      return undefined as T;
     case 'feeds_status':
       return feedStatus as T;
     case 'check_feed':

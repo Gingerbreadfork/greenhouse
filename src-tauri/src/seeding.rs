@@ -84,22 +84,22 @@ impl SeedLedger {
         }
     }
 
-    /// Whether a seeding torrent has reached one of the limits.
-    pub fn is_due(&self, row: &TorrentRow, settings: &Settings) -> bool {
+    /// The limit a seeding torrent has reached, if any, in words.
+    pub fn limit_reached(&self, row: &TorrentRow, settings: &Settings) -> Option<String> {
         if row.state != "seeding" {
-            return false;
+            return None;
         }
-        let Some(record) = self.records.get(&row.info_hash) else {
-            return false;
-        };
-        if record.done {
-            return false;
+        let record = self.records.get(&row.info_hash).filter(|r| !r.done)?;
+        if settings.seed_ratio_limit > 0.0
+            && ratio(record.uploaded, row.progress_bytes) >= settings.seed_ratio_limit
+        {
+            return Some(format!("Reached a ratio of {}", settings.seed_ratio_limit));
         }
-        let ratio_reached = settings.seed_ratio_limit > 0.0
-            && ratio(record.uploaded, row.progress_bytes) >= settings.seed_ratio_limit;
-        let time_reached = settings.seed_time_limit_minutes > 0
-            && record.seeded_ms >= u64::from(settings.seed_time_limit_minutes) * 60_000;
-        ratio_reached || time_reached
+        let minutes = settings.seed_time_limit_minutes;
+        if minutes > 0 && record.seeded_ms >= u64::from(minutes) * 60_000 {
+            return Some(format!("Seeded for {}", span(minutes)));
+        }
+        None
     }
 
     pub fn mark_done(&mut self, info_hash: &str) {
@@ -112,6 +112,16 @@ impl SeedLedger {
         let before = self.records.len();
         self.records.retain(|hash, _| live.contains(hash.as_str()));
         self.dirty |= self.records.len() != before;
+    }
+}
+
+/// A length of time in the largest unit that reads naturally.
+fn span(minutes: u32) -> String {
+    let plural = |n: u32, unit: &str| format!("{n} {unit}{}", if n == 1 { "" } else { "s" });
+    match (minutes / 60, minutes % 60) {
+        (0, m) => plural(m, "minute"),
+        (h, 0) => plural(h, "hour"),
+        (_, _) => format!("{:.1} hours", f64::from(minutes) / 60.0),
     }
 }
 
@@ -190,14 +200,23 @@ mod tests {
         ledger.record(&row("seeding", 1500), 60_000);
         let seeding = row("seeding", 1500);
 
-        assert!(!ledger.is_due(&seeding, &limits(0.0, 0)));
-        assert!(!ledger.is_due(&seeding, &limits(2.0, 5)));
-        assert!(ledger.is_due(&seeding, &limits(1.5, 0)));
-        assert!(ledger.is_due(&seeding, &limits(0.0, 1)));
-        assert!(!ledger.is_due(&row("complete", 1500), &limits(1.5, 0)));
+        assert_eq!(ledger.limit_reached(&seeding, &limits(0.0, 0)), None);
+        assert_eq!(ledger.limit_reached(&seeding, &limits(2.0, 5)), None);
+        assert_eq!(
+            ledger.limit_reached(&seeding, &limits(1.5, 0)).as_deref(),
+            Some("Reached a ratio of 1.5")
+        );
+        assert_eq!(
+            ledger.limit_reached(&seeding, &limits(0.0, 1)).as_deref(),
+            Some("Seeded for 1 minute")
+        );
+        assert_eq!(span(45), "45 minutes");
+        assert_eq!(span(120), "2 hours");
+        assert_eq!(span(90), "1.5 hours");
+        assert_eq!(ledger.limit_reached(&row("complete", 1500), &limits(1.5, 0)), None);
 
         ledger.mark_done("abc");
-        assert!(!ledger.is_due(&seeding, &limits(1.5, 1)));
+        assert_eq!(ledger.limit_reached(&seeding, &limits(1.5, 1)), None);
     }
 
     #[test]

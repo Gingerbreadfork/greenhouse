@@ -282,7 +282,8 @@ pub async fn check<R: Runtime>(app: &tauri::AppHandle<R>, feed: &Feed) -> FeedSt
         }
     };
     for item in to_add {
-        let _ = queue_with_defaults(app, item.link, Some(item.title), download_dir(feed));
+        let origin = Some(format!("Added from the feed {}", feed.name));
+        let _ = queue_with_defaults(app, item.link, Some(item.title), download_dir(feed), origin);
     }
     let status = state.feeds.lock().status.get(&feed.id).cloned();
     status.unwrap_or_default()
@@ -303,7 +304,8 @@ pub fn add_item<R: Runtime>(
         feeds.save(&state.paths.feeds_file());
         item
     };
-    queue_with_defaults(app, item.link, Some(item.title), download_dir(feed))
+    let origin = Some(format!("Picked from the feed {}", feed.name));
+    queue_with_defaults(app, item.link, Some(item.title), download_dir(feed), origin)
 }
 
 /// Checks each enabled feed when its turn comes round.

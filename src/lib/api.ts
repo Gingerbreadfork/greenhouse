@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  ActivityEntry,
   ApplyTrackersResult,
   RestoreToken,
   Bootstrap,
@@ -33,6 +34,8 @@ export const api = {
   playFile: (id: number, fileIndex: number) =>
     invoke<PlayResult>('play_file', { id, fileIndex }),
 
+  activityList: () => invoke<ActivityEntry[]>('activity_list'),
+  clearActivity: () => invoke<void>('clear_activity'),
   feedsStatus: () => invoke<Record<string, FeedStatus>>('feeds_status'),
   checkFeed: (id: string) => invoke<FeedStatus>('check_feed', { id }),
   addFeedItem: (feedId: string, guid: string) =>
