@@ -25,6 +25,8 @@
   let resolved = $state<StagedInfo | null>(null);
   const info = $derived(resolved ?? staged);
   let resolving = $state(false);
+  /** The swarm has been quiet long enough to say so. */
+  let slow = $state(false);
   let adding = $state(false);
   let failed = $state<string | null>(null);
 
@@ -63,6 +65,7 @@
   // Read once at mount; the sheet is keyed on the token.
   if (untrack(() => staged.needs_resolve)) {
     resolving = true;
+    const quiet = setTimeout(() => (slow = true), 12000);
     api
       .resolveStaged(untrack(() => staged.token))
       .then((next) => {
@@ -73,6 +76,7 @@
         failed = String(e);
       })
       .finally(() => {
+        clearTimeout(quiet);
         resolving = false;
       });
   }
@@ -252,6 +256,13 @@
         {/each}
       </div>
     </section>
+  {/if}
+
+  {#if resolving && slow}
+    <p class="quiet">
+      No peers have answered yet. You can add it now and Greenhouse will keep looking in the
+      background.
+    </p>
   {/if}
 
   {#if failed}
@@ -461,6 +472,13 @@
   .fsize {
     font-size: 11.5px;
     color: var(--ink-faint);
+  }
+
+  .quiet {
+    margin: 16px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ink-dim);
   }
 
   .failed {

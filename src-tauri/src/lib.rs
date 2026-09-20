@@ -18,6 +18,7 @@ use settings::Paths;
 #[derive(serde::Serialize, Clone)]
 struct Tick {
     torrents: Vec<engine::TorrentRow>,
+    pending: Vec<commands::PendingAdd>,
     session: engine::SessionSummary,
 }
 
@@ -57,6 +58,7 @@ pub fn run() {
                 settings: RwLock::new(loaded),
                 paths,
                 staged: Mutex::new(HashMap::new()),
+                resolving: Mutex::new(HashMap::new()),
                 http: reqwest::Client::builder()
                     .user_agent(concat!("Greenhouse/", env!("CARGO_PKG_VERSION")))
                     .timeout(Duration::from_secs(20))
@@ -114,6 +116,7 @@ fn spawn_ticker(app: tauri::AppHandle, session: Arc<librqbit::Session>) {
                 "greenhouse://tick",
                 Tick {
                     torrents: engine::collect_rows(&session),
+                    pending: commands::pending_adds(&state),
                     session: session_summary,
                 },
             );

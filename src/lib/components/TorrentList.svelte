@@ -2,6 +2,7 @@
   import { tick } from 'svelte';
   import Icon from './Icon.svelte';
   import TorrentRow from './TorrentRow.svelte';
+  import PendingRow from './PendingRow.svelte';
   import { store, type SortKey } from '../store.svelte';
 
   let {
@@ -35,6 +36,10 @@
 
   const sortLabel = $derived(sorts.find((s) => s.key === store.sortKey)?.label ?? 'Date added');
   const count = $derived(store.selection.length);
+  /** Adds still waiting for metadata belong with the downloads. */
+  const pending = $derived(
+    store.filter === 'all' || store.filter === 'downloading' ? store.pending : []
+  );
 
   const headings: Record<string, string> = {
     all: 'All downloads',
@@ -203,7 +208,7 @@
           </div>
         {/each}
       </div>
-    {:else if store.visible.length === 0}
+    {:else if store.visible.length === 0 && pending.length === 0}
       <div class="empty">
         {#if store.torrents.length === 0}
           <span class="glyph"><Icon name="seedling" size={30} stroke={1.5} /></span>
@@ -225,6 +230,9 @@
         {/if}
       </div>
     {:else}
+      {#each pending as add (add.token)}
+        <PendingRow pending={add} oncancel={() => store.cancelPending(add.token)} />
+      {/each}
       {#each store.visible as torrent, index (torrent.id)}
         <TorrentRow
           {torrent}

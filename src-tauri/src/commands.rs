@@ -1,11 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use bytes::Bytes;
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Api, Session};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
+use tauri::{Emitter, Manager};
+use tokio::sync::watch;
 
 use crate::engine::{self, SessionSummary, TorrentDetail, TorrentRow};
 use crate::settings::{self, Paths, Settings};
@@ -17,7 +20,21 @@ pub struct AppState {
     pub settings: RwLock<Settings>,
     pub paths: Paths,
     pub staged: Mutex<HashMap<String, Staged>>,
+    /// Metadata lookups in flight, by staged token. Locked after `staged`.
+    pub resolving: Mutex<HashMap<String, Resolving>>,
     pub http: reqwest::Client,
+}
+
+pub struct Resolving {
+    task: tauri::async_runtime::JoinHandle<()>,
+    done: watch::Receiver<Option<Result<(), String>>>,
+}
+
+/// An add that was confirmed before the metadata arrived.
+#[derive(Clone)]
+pub struct Queued {
+    pub request: CommitRequest,
+    pub since: Instant,
 }
 
 #[derive(Clone)]
@@ -32,6 +49,7 @@ pub struct Staged {
     pub files: Vec<StagedFile>,
     pub skipped: Vec<usize>,
     pub resolved: bool,
+    pub queued: Option<Queued>,
 }
 
 #[derive(Clone, Serialize)]
@@ -193,6 +211,7 @@ pub async fn stage_source(
                 files: Vec::new(),
                 skipped: Vec::new(),
                 resolved: false,
+                queued: None,
             }
         }
         _ => {
@@ -216,6 +235,7 @@ pub async fn stage_source(
                 files: Vec::new(),
                 skipped: Vec::new(),
                 resolved: false,
+                queued: None,
             }
         }
     };
@@ -294,33 +314,193 @@ async fn resolve(
     Ok(out)
 }
 
-#[tauri::command]
-pub async fn resolve_staged(
-    state: tauri::State<'_, AppState>,
-    token: String,
-) -> CmdResult<StagedInfo> {
+/// Starts the metadata lookup for a staged source unless one is already
+/// running. Call with `staged` locked so a finishing lookup cannot be missed.
+fn ensure_resolving<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+    token: &str,
+) -> watch::Receiver<Option<Result<(), String>>> {
+    let mut resolving = state.resolving.lock();
+    if let Some(lookup) = resolving.get(token) {
+        return lookup.done.clone();
+    }
+    let (tx, done) = watch::channel(None);
+    let task = tauri::async_runtime::spawn({
+        let app = app.clone();
+        let token = token.to_string();
+        async move {
+            let state = app.state::<AppState>();
+            let outcome = lookup(&state, &token).await;
+            let queued = finish_lookup(&state, &token, &outcome);
+            let _ = tx.send(Some(outcome.as_ref().map(|_| ()).map_err(String::clone)));
+            if let Some(queued) = queued {
+                run_queued(&app, &state, &token, queued.request, outcome).await;
+            }
+        }
+    });
+    resolving.insert(
+        token.to_string(),
+        Resolving {
+            task,
+            done: done.clone(),
+        },
+    );
+    done
+}
+
+async fn lookup(state: &AppState, token: &str) -> CmdResult<Staged> {
     let staged = state
         .staged
         .lock()
-        .get(&token)
+        .get(token)
         .cloned()
         .ok_or("that torrent is no longer staged")?;
-    if staged.resolved {
-        return Ok(StagedInfo::from(token, &staged));
-    }
     let extra = state.settings.read().active_trackers();
     let mut resolved = resolve(&state.session, &staged, &extra).await.map_err(err)?;
     resolved.skipped = skipped_indices(&resolved.files, &state.settings.read());
-    state.staged.lock().insert(token.clone(), resolved.clone());
-    Ok(StagedInfo::from(token, &resolved))
+    Ok(resolved)
+}
+
+/// Records what a lookup found and hands back the add waiting on it, if any.
+fn finish_lookup(state: &AppState, token: &str, outcome: &CmdResult<Staged>) -> Option<Queued> {
+    let mut staged = state.staged.lock();
+    state.resolving.lock().remove(token);
+    let entry = staged.get_mut(token)?;
+    let queued = entry.queued.take();
+    if let Ok(resolved) = outcome {
+        *entry = Staged {
+            queued: None,
+            ..resolved.clone()
+        };
+    }
+    queued
+}
+
+/// Every file except the ones skipped by default, or None for "everything".
+fn default_selection(staged: &Staged) -> Option<Vec<usize>> {
+    if staged.skipped.is_empty() {
+        return None;
+    }
+    Some(
+        staged
+            .files
+            .iter()
+            .map(|f| f.index)
+            .filter(|i| !staged.skipped.contains(i))
+            .collect(),
+    )
+}
+
+#[derive(Serialize, Clone)]
+pub struct AddFailed {
+    pub name: Option<String>,
+    pub error: String,
+}
+
+async fn run_queued<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+    token: &str,
+    mut request: CommitRequest,
+    outcome: CmdResult<Staged>,
+) {
+    let result = match outcome {
+        Ok(staged) => {
+            if request.selected_files.is_none() {
+                request.selected_files = default_selection(&staged);
+            }
+            commit_resolved(state, &staged, &request).await
+        }
+        Err(e) => Err(e),
+    };
+    match result {
+        Ok(added) => {
+            let _ = app.emit("greenhouse://added", added);
+        }
+        Err(error) => {
+            let name = state.staged.lock().remove(token).and_then(|s| s.name);
+            let _ = app.emit("greenhouse://add-failed", AddFailed { name, error });
+        }
+    }
 }
 
 #[tauri::command]
-pub fn discard_staged(state: tauri::State<'_, AppState>, token: String) {
-    state.staged.lock().remove(&token);
+pub async fn resolve_staged<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    token: String,
+) -> CmdResult<StagedInfo> {
+    let mut done = {
+        let staged = state.staged.lock();
+        let entry = staged
+            .get(&token)
+            .ok_or("that torrent is no longer staged")?;
+        if entry.resolved {
+            return Ok(StagedInfo::from(token.clone(), entry));
+        }
+        ensure_resolving(&app, &state, &token)
+    };
+    let outcome = done
+        .wait_for(|v| v.is_some())
+        .await
+        .map_err(|_| "the lookup was cancelled")?
+        .clone();
+    outcome.unwrap_or(Ok(()))?;
+    let staged = state.staged.lock();
+    let entry = staged
+        .get(&token)
+        .ok_or("that torrent is no longer staged")?;
+    Ok(StagedInfo::from(token.clone(), entry))
 }
 
-#[derive(Deserialize)]
+/// Drops a staged source, stopping its lookup and any add waiting on it.
+#[tauri::command]
+pub fn discard_staged(state: tauri::State<'_, AppState>, token: String) {
+    let mut staged = state.staged.lock();
+    staged.remove(&token);
+    if let Some(lookup) = state.resolving.lock().remove(&token) {
+        lookup.task.abort();
+    }
+}
+
+#[derive(Serialize, Clone)]
+pub struct PendingAdd {
+    pub token: String,
+    pub name: String,
+    pub info_hash: Option<String>,
+    pub waiting_seconds: u64,
+}
+
+/// Adds that are confirmed but still waiting for metadata, oldest first.
+pub fn pending_adds(state: &AppState) -> Vec<PendingAdd> {
+    let mut list: Vec<PendingAdd> = state
+        .staged
+        .lock()
+        .iter()
+        .filter_map(|(token, s)| {
+            let queued = s.queued.as_ref()?;
+            Some(PendingAdd {
+                token: token.clone(),
+                name: display_name(s),
+                info_hash: s.info_hash.clone(),
+                waiting_seconds: queued.since.elapsed().as_secs(),
+            })
+        })
+        .collect();
+    list.sort_by(|a, b| b.waiting_seconds.cmp(&a.waiting_seconds));
+    list
+}
+
+fn display_name(staged: &Staged) -> String {
+    staged
+        .name
+        .clone()
+        .or_else(|| staged.info_hash.clone())
+        .unwrap_or_else(|| staged.source.clone())
+}
+
+#[derive(Deserialize, Clone)]
 pub struct CommitRequest {
     pub token: String,
     pub download_dir: String,
@@ -331,42 +511,69 @@ pub struct CommitRequest {
     pub selected_files: Option<Vec<usize>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct CommitResult {
-    pub id: usize,
+    /// None while the add is still waiting for metadata.
+    pub id: Option<usize>,
     pub name: String,
     pub tracker_count: usize,
+    pub pending: bool,
 }
 
+/// Adds a staged source. Without metadata yet, the add is queued behind the
+/// lookup and finishes in the background.
 #[tauri::command]
-pub async fn commit_staged(
+pub async fn commit_staged<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, AppState>,
     request: CommitRequest,
 ) -> CmdResult<CommitResult> {
-    let staged = state
-        .staged
-        .lock()
-        .get(&request.token)
-        .cloned()
-        .ok_or("that torrent is no longer staged")?;
-
-    let (auto, from_packs) = {
-        let settings = state.settings.read();
-        (
-            if request.use_auto_packs {
-                settings.active_trackers()
-            } else {
-                Vec::new()
-            },
-            settings.trackers_in_packs(&request.pack_ids),
-        )
+    let staged = {
+        let mut map = state.staged.lock();
+        let entry = map
+            .get_mut(&request.token)
+            .ok_or("that torrent is no longer staged")?;
+        if entry.bytes.is_none() {
+            let result = CommitResult {
+                id: None,
+                name: display_name(entry),
+                tracker_count: commit_trackers(&state, entry, &request).len(),
+                pending: true,
+            };
+            let token = request.token.clone();
+            entry.queued = Some(Queued {
+                request,
+                since: Instant::now(),
+            });
+            ensure_resolving(&app, &state, &token);
+            return Ok(result);
+        }
+        entry.clone()
     };
-    let trackers = torrentsrc::merge_trackers(&[
+    commit_resolved(&state, &staged, &request).await
+}
+
+fn commit_trackers(state: &AppState, staged: &Staged, request: &CommitRequest) -> Vec<String> {
+    let settings = state.settings.read();
+    let auto = if request.use_auto_packs {
+        settings.active_trackers()
+    } else {
+        Vec::new()
+    };
+    torrentsrc::merge_trackers(&[
         &staged.trackers,
         &auto,
-        &from_packs,
+        &settings.trackers_in_packs(&request.pack_ids),
         &request.extra_trackers,
-    ]);
+    ])
+}
+
+async fn commit_resolved(
+    state: &AppState,
+    staged: &Staged,
+    request: &CommitRequest,
+) -> CmdResult<CommitResult> {
+    let trackers = commit_trackers(state, staged, request);
 
     let (session_default, incomplete_dir) = {
         let settings = state.settings.read();
@@ -377,7 +584,7 @@ pub async fn commit_staged(
     // there and move to the real destination on completion.
     let (output_folder, pending_final) = if incomplete_dir.is_empty() {
         (
-            resolve_output_folder(&request.download_dir, &session_default, &staged),
+            resolve_output_folder(&request.download_dir, &session_default, staged),
             None,
         )
     } else {
@@ -387,8 +594,8 @@ pub async fn commit_staged(
             request.download_dir.clone()
         };
         (
-            Some(staging_folder(&incomplete_dir, &staged)),
-            Some(explicit_output_folder(&destination, &staged)),
+            Some(staging_folder(&incomplete_dir, staged)),
+            Some(explicit_output_folder(&destination, staged)),
         )
     };
 
@@ -437,11 +644,12 @@ pub async fn commit_staged(
     state.staged.lock().remove(&request.token);
 
     Ok(CommitResult {
-        id,
+        id: Some(id),
         name: handle
             .name()
             .unwrap_or_else(|| handle.info_hash().as_string()),
         tracker_count: trackers.len(),
+        pending: false,
     })
 }
 
@@ -855,6 +1063,195 @@ mod tests {
         assert_eq!(parsed.selected_files, None);
     }
 
+    use std::time::Duration;
+    use tauri::Listener;
+
+    const QUIET_TRACKER: &str = "&tr=udp%3A%2F%2F127.0.0.1%3A1%2Fannounce";
+
+    /// A mock app around a real engine. Offline, nothing leaves the machine.
+    async fn test_app(name: &str, online: bool) -> tauri::App<tauri::test::MockRuntime> {
+        let root = std::env::temp_dir().join(format!("gh-add-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let session = Session::new_with_opts(
+            root.join("downloads"),
+            librqbit::SessionOptions {
+                dht: online.then(|| librqbit::DhtSessionConfig {
+                    persistence: None,
+                    ..Default::default()
+                }),
+                persistence: None,
+                listen: None,
+                disable_local_service_discovery: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let mut settings = Settings::default();
+        settings.packs.clear();
+        settings.download_dir = root.join("downloads").to_string_lossy().into_owned();
+        let paths = Paths {
+            config_dir: root.join("config"),
+            data_dir: root.join("data"),
+        };
+        std::fs::create_dir_all(paths.data_dir.join("sources")).unwrap();
+
+        let app = tauri::test::mock_app();
+        app.manage(AppState {
+            api: Api::new(session.clone(), None),
+            session,
+            settings: RwLock::new(settings),
+            paths,
+            staged: Mutex::new(HashMap::new()),
+            resolving: Mutex::new(HashMap::new()),
+            http: reqwest::Client::new(),
+        });
+        app
+    }
+
+    fn commit_request(token: &str) -> CommitRequest {
+        CommitRequest {
+            token: token.into(),
+            download_dir: String::new(),
+            start_paused: true,
+            use_auto_packs: false,
+            pack_ids: vec![],
+            extra_trackers: vec![],
+            selected_files: None,
+        }
+    }
+
+    async fn stage_magnet(app: &tauri::App<tauri::test::MockRuntime>, magnet: String) -> String {
+        let request = StageRequest { kind: "text".into(), value: magnet };
+        stage_source(app.state(), request).await.unwrap().token
+    }
+
+    fn events(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        name: &str,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<String> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        app.listen(name, move |event| {
+            let _ = tx.send(event.payload().to_string());
+        });
+        rx
+    }
+
+    /// Adding a magnet nobody answers for returns at once, shows up as
+    /// pending, and cancelling it stops the lookup and wakes anything waiting.
+    #[test]
+    fn unanswered_magnet_is_queued_and_can_be_cancelled() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("quiet", false).await;
+            let magnet =
+                format!("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Quiet{QUIET_TRACKER}");
+            let token = stage_magnet(&app, magnet).await;
+
+            let sheet = tauri::async_runtime::spawn({
+                let (handle, token) = (app.handle().clone(), token.clone());
+                async move { resolve_staged(handle.clone(), handle.state(), token).await.map(|_| ()) }
+            });
+
+            let committed = tokio::time::timeout(
+                Duration::from_secs(2),
+                commit_staged(app.handle().clone(), app.state(), commit_request(&token)),
+            )
+            .await
+            .expect("commit must not wait for the swarm")
+            .unwrap();
+            assert!(committed.pending);
+            assert_eq!(committed.id, None);
+
+            let state = app.state::<AppState>();
+            let pending = pending_adds(&state);
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].name, "Quiet");
+            assert_eq!(state.resolving.lock().len(), 1);
+
+            discard_staged(app.state(), token);
+            assert!(pending_adds(&state).is_empty());
+            assert!(state.resolving.lock().is_empty());
+            let waited = tokio::time::timeout(Duration::from_secs(2), sheet).await;
+            assert!(waited.expect("the sheet must be released").unwrap().is_err());
+        });
+    }
+
+    /// A queued add whose lookup fails reports the failure and cleans up.
+    #[test]
+    fn failed_lookup_reports_and_clears_the_queued_add() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("fail", false).await;
+            let mut failed = events(&app, "greenhouse://add-failed");
+            let magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Nowhere";
+            let token = stage_magnet(&app, magnet.into()).await;
+
+            let committed = commit_staged(app.handle().clone(), app.state(), commit_request(&token))
+                .await
+                .unwrap();
+            assert!(committed.pending);
+
+            let payload = tokio::time::timeout(Duration::from_secs(5), failed.recv())
+                .await
+                .expect("the failure must be reported")
+                .unwrap();
+            assert!(payload.contains("Nowhere"), "{payload}");
+            let state = app.state::<AppState>();
+            assert!(state.staged.lock().is_empty());
+            assert!(state.resolving.lock().is_empty());
+        });
+    }
+
+    /// Uses the network: a magnet confirmed before its metadata arrives is
+    /// added on its own once a peer answers.
+    #[test]
+    #[ignore]
+    fn queued_magnet_is_added_once_metadata_arrives() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("live", true).await;
+            let mut added = events(&app, "greenhouse://added");
+            let magnet = "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny";
+            let token = stage_magnet(&app, magnet.into()).await;
+
+            let committed = commit_staged(app.handle().clone(), app.state(), commit_request(&token))
+                .await
+                .unwrap();
+            assert!(committed.pending);
+
+            let payload = tokio::time::timeout(Duration::from_secs(90), added.recv())
+                .await
+                .expect("no peer answered in time")
+                .unwrap();
+            assert!(payload.contains("\"pending\":false"), "{payload}");
+            let state = app.state::<AppState>();
+            assert_eq!(engine::collect_rows(&state.session).len(), 1);
+            assert!(state.staged.lock().is_empty());
+            assert!(pending_adds(&state).is_empty());
+        });
+    }
+
+    /// A queued add has no file selection yet, so it falls back to everything
+    /// except the file types skipped by default.
+    #[test]
+    fn queued_adds_leave_out_skipped_files() {
+        let file = |index| StagedFile { index, name: String::new(), components: vec![], length: 1 };
+        let staged = Staged {
+            kind: "magnet".into(),
+            source: String::new(),
+            bytes: None,
+            info_hash: None,
+            name: None,
+            total_bytes: 0,
+            trackers: vec![],
+            files: vec![file(0), file(1), file(2)],
+            skipped: vec![1],
+            resolved: true,
+            queued: None,
+        };
+        assert_eq!(default_selection(&staged), Some(vec![0, 2]));
+        assert_eq!(default_selection(&Staged { skipped: vec![], ..staged }), None);
+    }
+
     /// A custom destination keeps librqbit's per-torrent sub-folder behaviour.
     #[test]
     fn output_folder_follows_the_chosen_destination() {
@@ -872,6 +1269,7 @@ mod tests {
             ],
             skipped: vec![],
             resolved: true,
+            queued: None,
         };
         let single = Staged { files: vec![], ..multi.clone() };
 

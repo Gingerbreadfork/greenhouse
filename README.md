@@ -65,7 +65,9 @@ torrent URL, or paste a bare info hash.
 
 Before anything downloads you get the destination, the file list, and the
 tracker count. Magnet metadata resolves in the background while the rest of the
-sheet stays usable, so you can hit *Add* before it finishes.
+sheet stays usable, so you can hit *Add* before it finishes. A magnet whose
+peers are slow to answer waits at the top of the list and is added the moment
+its details arrive; you can stop it from there at any time.
 
 **Skip file types.** Extensions you list (`exe`, `msi`, `bat` and friends by
 default) arrive unticked, with a note saying why and a one-click way to include

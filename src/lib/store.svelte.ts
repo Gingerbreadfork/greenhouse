@@ -1,6 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
 import { api } from './api';
-import type { SessionSummary, Settings, TorrentRow } from './types';
+import type { CommitResult, PendingAdd, SessionSummary, Settings, TorrentRow } from './types';
 
 export type View = 'torrents' | 'trackers' | 'stats' | 'settings' | 'about';
 export type Filter = 'all' | 'downloading' | 'seeding' | 'paused' | 'finished' | 'issues';
@@ -43,6 +43,7 @@ class Store {
   defaultDir = $state('');
 
   torrents = $state.raw<TorrentRow[]>([]);
+  pending = $state.raw<PendingAdd[]>([]);
   session = $state.raw<SessionSummary>(EMPTY_SESSION);
   settings = $state<Settings | null>(null);
 
@@ -156,10 +157,11 @@ class Store {
     this.torrents = await api.listTorrents();
     this.ready = true;
 
-    await listen<{ torrents: TorrentRow[]; session: SessionSummary }>(
+    await listen<{ torrents: TorrentRow[]; pending: PendingAdd[]; session: SessionSummary }>(
       'greenhouse://tick',
       (event) => {
         this.torrents = event.payload.torrents;
+        this.pending = event.payload.pending;
         this.session = event.payload.session;
         this.pruneSelection();
         this.recordActivity(
@@ -168,6 +170,27 @@ class Store {
         );
       }
     );
+    await this.watchPendingAdds();
+  }
+
+  /** Adds that finish in the background report back here. */
+  private async watchPendingAdds() {
+    await listen<CommitResult>('greenhouse://added', (event) => {
+      this.refresh();
+      this.toast(`Added ${event.payload.name}`, 'good', trackerNote(event.payload.tracker_count));
+    });
+    await listen<{ name: string | null; error: string }>('greenhouse://add-failed', (event) => {
+      this.toast(
+        `Could not add ${event.payload.name ?? 'that magnet link'}`,
+        'bad',
+        event.payload.error
+      );
+    });
+  }
+
+  async cancelPending(token: string) {
+    this.pending = this.pending.filter((p) => p.token !== token);
+    await api.discardStaged(token);
   }
 
   /** Recording starts at the first byte transferred. */
@@ -317,6 +340,10 @@ function push(series: number[], value: number): number[] {
   const next = series.slice(1);
   next.push(value);
   return next;
+}
+
+export function trackerNote(count: number): string {
+  return count > 0 ? `${count} trackers attached` : 'No trackers attached, so it will rely on DHT';
 }
 
 export function looksLikeSource(text: string): boolean {

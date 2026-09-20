@@ -20,7 +20,7 @@
   import Icon from './lib/components/Icon.svelte';
 
   import { api } from './lib/api';
-  import { store } from './lib/store.svelte';
+  import { store, trackerNote } from './lib/store.svelte';
   import type { RestoreToken, StagedInfo, TorrentRow } from './lib/types';
 
   let staged = $state<StagedInfo | null>(null);
@@ -38,7 +38,9 @@
     if (staging) return;
     staging = true;
     try {
+      const replaced = staged;
       staged = await api.stageSource(kind, value);
+      if (replaced) api.discardStaged(replaced.token).catch(() => {});
     } catch (e) {
       store.toast('That could not be opened', 'bad', String(e));
     } finally {
@@ -326,14 +328,16 @@
       onclose={() => (staged = null)}
       ondone={(result) => {
         staged = null;
+        if (result.pending) {
+          store.toast(
+            `Looking for ${result.name}`,
+            'info',
+            'It will be added as soon as a peer sends its details'
+          );
+          return;
+        }
         store.refresh();
-        store.toast(
-          `Added ${result.name}`,
-          'good',
-          result.tracker_count > 0
-            ? `${result.tracker_count} trackers attached`
-            : 'No trackers attached, so it will rely on DHT'
-        );
+        store.toast(`Added ${result.name}`, 'good', trackerNote(result.tracker_count));
       }}
     />
   {/key}

@@ -44,7 +44,12 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
         needs_resolve: false
       } as T;
     case 'commit_staged':
-      return { id: 99, name: 'ubuntu-24.04.1-desktop-amd64.iso', tracker_count: 15 } as T;
+      return {
+        id: 99,
+        name: 'ubuntu-24.04.1-desktop-amd64.iso',
+        tracker_count: 15,
+        pending: false
+      } as T;
     case 'apply_trackers':
       return { id: args?.id, tracker_count: 20, added: 6 } as T;
     case 'apply_trackers_to_all':
@@ -105,7 +110,7 @@ export function startTicker() {
       upload_speed: idle ? 0 : Math.round(session.upload_speed * (2 - wobble))
     };
     listeners.get('greenhouse://tick')?.({
-      payload: { torrents: live, session: state.session }
+      payload: { torrents: live, pending: [], session: state.session }
     });
   }, 900);
 }

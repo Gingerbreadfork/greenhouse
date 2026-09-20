@@ -144,9 +144,19 @@ export interface StagedInfo {
 }
 
 export interface CommitResult {
-  id: number;
+  /** Null while the add is still waiting for metadata. */
+  id: number | null;
   name: string;
   tracker_count: number;
+  pending: boolean;
+}
+
+/** A confirmed add that is still waiting for peers to send its metadata. */
+export interface PendingAdd {
+  token: string;
+  name: string;
+  info_hash: string | null;
+  waiting_seconds: number;
 }
 
 export interface RestoreToken {
