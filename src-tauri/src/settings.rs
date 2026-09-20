@@ -158,9 +158,12 @@ fn starter_pack() -> TrackerPack {
     }
 }
 
+#[derive(Clone)]
 pub struct Paths {
     pub config_dir: PathBuf,
     pub data_dir: PathBuf,
+    /// Where the DHT keeps its state. None means the engine's usual place.
+    pub dht_file: Option<PathBuf>,
 }
 
 impl Paths {
@@ -177,6 +180,7 @@ impl Paths {
         Self {
             config_dir,
             data_dir,
+            dht_file: None,
         }
     }
 

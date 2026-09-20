@@ -2,6 +2,7 @@
 //! is still downloading. The engine fetches the parts being read first.
 
 use std::io::SeekFrom;
+use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -9,9 +10,10 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
-use librqbit::Api;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
+
+use crate::engine::EngineSlot;
 
 /// Where the server listens, and the secret that guards it.
 #[derive(Clone)]
@@ -33,20 +35,20 @@ impl StreamServer {
 
 #[derive(Clone)]
 struct Shared {
-    api: Api,
+    engine: Arc<EngineSlot>,
     token: String,
 }
 
 /// Starts the server on a free local port. Only requests carrying the token
 /// are answered, so other programs and web pages cannot read your files.
-pub async fn start(api: Api) -> anyhow::Result<StreamServer> {
+pub async fn start(engine: Arc<EngineSlot>) -> anyhow::Result<StreamServer> {
     let token = uuid::Uuid::new_v4().simple().to_string();
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
     let port = listener.local_addr()?.port();
     let app = Router::new()
         .route("/{token}/{torrent}/{file}/{*name}", get(serve))
         .with_state(Shared {
-            api,
+            engine,
             token: token.clone(),
         });
     tokio::spawn(async move {
@@ -83,7 +85,8 @@ async fn serve(
     if token != shared.token {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let mut stream = match shared.api.api_stream(torrent.into(), file).await {
+    let api = shared.engine.get().api.clone();
+    let mut stream = match api.api_stream(torrent.into(), file).await {
         Ok(stream) => stream,
         Err(_) => return StatusCode::NOT_FOUND.into_response(),
     };
@@ -91,7 +94,7 @@ async fn serve(
 
     let mut out = HeaderMap::new();
     out.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
-    if let Ok(mime) = shared.api.torrent_file_mime_type(torrent.into(), file) {
+    if let Ok(mime) = api.torrent_file_mime_type(torrent.into(), file) {
         out.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
     }
 

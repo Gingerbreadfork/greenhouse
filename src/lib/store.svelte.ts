@@ -66,6 +66,13 @@ class Store {
   unseenActivity = $state(0);
   session = $state.raw<SessionSummary>(EMPTY_SESSION);
   settings = $state<Settings | null>(null);
+  /** The network settings the running engine was started with. */
+  private appliedNetwork = $state('');
+  /** Network settings have changed since the engine started. */
+  engineStale = $derived(
+    this.settings !== null && networkKey(this.settings) !== this.appliedNetwork
+  );
+  restartingEngine = $state(false);
 
   view = $state<View>('torrents');
   filter = $state<Filter>('all');
@@ -174,6 +181,7 @@ class Store {
     this.homeDir = boot.home_dir;
     this.defaultDir = boot.default_download_dir;
     this.boundInterface = boot.bound_interface;
+    this.appliedNetwork = networkKey(boot.settings);
     for (const warning of boot.warnings) this.toast('Check your network settings', 'bad', warning);
     this.applyChrome();
     this.torrents = await api.listTorrents();
@@ -198,6 +206,25 @@ class Store {
       this.activity = [event.payload, ...this.activity];
       if (this.view !== 'activity') this.unseenActivity += 1;
     });
+  }
+
+  /** Restarts the engine so changed network settings take effect now. */
+  async restartEngine() {
+    if (!this.settings || this.restartingEngine) return;
+    this.restartingEngine = true;
+    const wanted = networkKey(this.settings);
+    try {
+      const info = await api.restartEngine();
+      this.boundInterface = info.bound_interface;
+      if (info.warnings.length === 0) this.appliedNetwork = wanted;
+      for (const warning of info.warnings) this.toast('Check your network settings', 'bad', warning);
+      if (info.warnings.length === 0) this.toast('Network settings applied', 'good');
+      await this.refresh();
+    } catch (e) {
+      this.toast('The engine could not be restarted', 'bad', String(e));
+    } finally {
+      this.restartingEngine = false;
+    }
   }
 
   openActivity() {
@@ -392,6 +419,18 @@ function push(series: number[], value: number): number[] {
   const next = series.slice(1);
   next.push(value);
   return next;
+}
+
+/** The settings that only take effect when the engine starts. */
+function networkKey(s: Settings): string {
+  return JSON.stringify([
+    s.listen_port,
+    s.enable_upnp,
+    s.transport,
+    s.peer_limit_per_torrent,
+    s.bind_interface,
+    s.blocklist_url
+  ]);
 }
 
 function trackerNote(count: number): string {

@@ -77,6 +77,45 @@ pub struct Engine {
     pub warnings: Vec<String>,
 }
 
+/// The engine in use right now, with what it was started with.
+pub struct Running {
+    pub session: Arc<Session>,
+    pub api: Api,
+    pub bound_interface: Option<String>,
+    pub blocklist_active: bool,
+    /// The settings this engine was built from, to fall back on.
+    pub applied: Settings,
+}
+
+impl Running {
+    pub fn new(engine: Engine, applied: Settings) -> Self {
+        Self {
+            api: Api::new(engine.session.clone(), None),
+            session: engine.session,
+            bound_interface: engine.bound_interface,
+            blocklist_active: engine.blocklist_active,
+            applied,
+        }
+    }
+}
+
+/// Holds the running engine so it can be replaced without restarting the app.
+pub struct EngineSlot(parking_lot::RwLock<Arc<Running>>);
+
+impl EngineSlot {
+    pub fn new(running: Running) -> Self {
+        Self(parking_lot::RwLock::new(Arc::new(running)))
+    }
+
+    pub fn get(&self) -> Arc<Running> {
+        self.0.read().clone()
+    }
+
+    pub fn set(&self, running: Running) {
+        *self.0.write() = Arc::new(running);
+    }
+}
+
 fn session_options(
     paths: &Paths,
     settings: &Settings,
@@ -90,6 +129,13 @@ fn session_options(
             folder: Some(paths.session_dir()),
         }),
         fastresume: true,
+        dht: Some(librqbit::DhtSessionConfig {
+            persistence: Some(librqbit::dht::DhtPersistenceConfig {
+                config_filename: paths.dht_file.clone(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
         bind_device_name,
         blocklist_url,
         peer_limit: (settings.peer_limit_per_torrent > 0)
@@ -480,7 +526,7 @@ mod tests {
     #[test]
     fn the_blocklist_needs_both_a_url_and_a_downloaded_copy() {
         let dir = scratch("source");
-        let paths = Paths { config_dir: dir.clone(), data_dir: dir.clone() };
+        let paths = Paths { config_dir: dir.clone(), data_dir: dir.clone(), dht_file: None };
         let mut settings = Settings::default();
         settings.blocklist_url = "https://example.org/list.gz".into();
         assert_eq!(blocklist_source(&paths, &settings), None);

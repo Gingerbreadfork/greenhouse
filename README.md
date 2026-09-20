@@ -120,7 +120,9 @@ not when the app launches.
 <img src="docs/screenshots/statistics.png" alt="The statistics page, with session totals and a throughput chart" width="100%">
 
 **Network.** Port, UPnP, transport and per-torrent peer limits. Speed limits
-that apply the moment you set them. DHT and local peer discovery are on.
+that apply the moment you set them; the rest apply with one button, which
+restarts the engine in place without relaunching. DHT and local peer discovery
+are on.
 
 **Blocklist.** Point Greenhouse at a P2P-format blocklist, plain or gzipped,
 and peers on it are refused. The list is refreshed daily and the statistics

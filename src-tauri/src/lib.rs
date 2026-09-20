@@ -14,7 +14,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use librqbit::Api;
 use parking_lot::{Mutex, RwLock};
 use tauri::{Emitter, Manager};
 
@@ -60,17 +59,21 @@ pub fn run() {
                 let _ = settings::save(&paths.settings_file(), &loaded);
             }
 
-            let engine = tauri::async_runtime::block_on(engine::build_session(&paths, &loaded))?;
-            let session = engine.session;
-            let api = Api::new(session.clone(), None);
+            let mut engine =
+                tauri::async_runtime::block_on(engine::build_session(&paths, &loaded))?;
+            let startup_warnings = std::mem::take(&mut engine.warnings);
+            let engine = Arc::new(engine::EngineSlot::new(engine::Running::new(
+                engine,
+                loaded.clone(),
+            )));
             let seeding = seeding::SeedLedger::load(&paths.seeding_file());
             let feeds = feeds::FeedsState::load(&paths.feeds_file());
             let activity = activity::ActivityLog::load(paths.activity_file());
-            let stream = tauri::async_runtime::block_on(stream::start(api.clone())).ok();
+            let stream = tauri::async_runtime::block_on(stream::start(engine.clone())).ok();
 
             app.manage(AppState {
-                session: session.clone(),
-                api,
+                engine,
+                restarting: tokio::sync::Mutex::new(()),
                 settings: RwLock::new(loaded),
                 paths,
                 staged: Mutex::new(HashMap::new()),
@@ -79,9 +82,7 @@ pub fn run() {
                 feeds: Mutex::new(feeds),
                 activity: Mutex::new(activity),
                 stream,
-                bound_interface: engine.bound_interface,
-                blocklist_active: engine.blocklist_active,
-                startup_warnings: engine.warnings,
+                startup_warnings,
                 http: reqwest::Client::builder()
                     .user_agent(concat!("Greenhouse/", env!("CARGO_PKG_VERSION")))
                     .timeout(Duration::from_secs(20))
@@ -90,7 +91,7 @@ pub fn run() {
             });
 
             commands::restore_queue(app.handle());
-            spawn_ticker(app.handle().clone(), session);
+            spawn_ticker(app.handle().clone());
             refresh_stale_blocklist(app.handle().clone());
             watch::spawn(app.handle().clone());
             feeds::spawn(app.handle().clone());
@@ -101,6 +102,7 @@ pub fn run() {
             commands::bootstrap,
             commands::list_interfaces,
             commands::free_space,
+            commands::restart_engine,
             commands::blocklist_status,
             commands::refresh_blocklist,
             commands::save_settings,
@@ -135,7 +137,7 @@ pub fn run() {
 
 /// Pushes a full snapshot to the window on a fixed cadence, so the UI never
 /// has to poll and every row animates from the same clock.
-fn spawn_ticker(app: tauri::AppHandle, session: Arc<librqbit::Session>) {
+fn spawn_ticker(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(900));
         let mut supervisor = supervisor::Supervisor::default();
@@ -145,6 +147,7 @@ fn spawn_ticker(app: tauri::AppHandle, session: Arc<librqbit::Session>) {
                 Some(s) => s,
                 None => continue,
             };
+            let session = state.session();
             let torrents = engine::collect_rows(&session);
             supervisor.tick(&app, &state, &torrents).await;
 

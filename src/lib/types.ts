@@ -186,6 +186,12 @@ export interface BlocklistStatus {
   bytes: number;
 }
 
+export interface EngineInfo {
+  bound_interface: string | null;
+  blocklist_active: boolean;
+  warnings: string[];
+}
+
 export interface NetInterface {
   name: string;
   up: boolean;

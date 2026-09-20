@@ -6,6 +6,7 @@ import type {
   Bootstrap,
   BlocklistStatus,
   CommitResult,
+  EngineInfo,
   FeedStatus,
   NetInterface,
   PlayResult,
@@ -18,6 +19,7 @@ import type {
 
 export const api = {
   bootstrap: () => invoke<Bootstrap>('bootstrap'),
+  restartEngine: () => invoke<EngineInfo>('restart_engine'),
   freeSpace: (path: string) => invoke<number | null>('free_space', { path }),
   listInterfaces: () => invoke<NetInterface[]>('list_interfaces'),
   blocklistStatus: () => invoke<BlocklistStatus>('blocklist_status'),

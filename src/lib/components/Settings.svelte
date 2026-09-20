@@ -53,7 +53,7 @@
     const when = new Date(blocklist.updated_at * 1000).toLocaleDateString();
     return blocklist.active
       ? `In use. Updated ${when}, ${bytes(blocklist.bytes)}.`
-      : `Downloaded ${when}. Greenhouse starts using it when it next starts.`;
+      : `Downloaded ${when}. Apply the network settings to start using it.`;
   });
 
   async function updateBlocklist() {
@@ -65,6 +65,11 @@
     } finally {
       fetchingBlocklist = false;
     }
+  }
+
+  async function applyNetwork() {
+    await store.restartEngine();
+    blocklist = await api.blocklistStatus().catch(() => blocklist);
   }
 
   async function setBlocklistUrl(url: string) {
@@ -359,10 +364,15 @@
 
   <section class="group">
     <h2>Network</h2>
-    <p class="banner">
-      <Icon name="alert" size={13} />
-      Greenhouse picks these up when it next starts.
-    </p>
+    {#if store.engineStale}
+      <p class="banner">
+        <Icon name="alert" size={13} />
+        <span>Not in use yet. Applying restarts the engine, which pauses transfers for a moment.</span>
+        <button class="btn" disabled={store.restartingEngine} onclick={applyNetwork}>
+          {store.restartingEngine ? 'Applying…' : 'Apply now'}
+        </button>
+      </p>
+    {/if}
     <div class="field">
       <div class="field-text">
         <span class="label">Incoming port</span>
@@ -642,6 +652,8 @@
     color: var(--heat);
     font-size: 11.5px;
   }
+
+  .banner span { flex: 1; }
 
   .field {
     display: flex;

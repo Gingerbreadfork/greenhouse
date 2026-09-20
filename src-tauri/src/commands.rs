@@ -19,8 +19,9 @@ use crate::settings::{self, Paths, Settings};
 use crate::torrentsrc;
 
 pub struct AppState {
-    pub session: Arc<Session>,
-    pub api: Api,
+    pub engine: Arc<engine::EngineSlot>,
+    /// Held while the engine is being restarted.
+    pub restarting: tokio::sync::Mutex<()>,
     pub settings: RwLock<Settings>,
     pub paths: Paths,
     pub staged: Mutex<HashMap<String, Staged>>,
@@ -31,10 +32,18 @@ pub struct AppState {
     pub activity: Mutex<ActivityLog>,
     /// Serves files to a media player while they download.
     pub stream: Option<StreamServer>,
-    pub bound_interface: Option<String>,
-    pub blocklist_active: bool,
     pub startup_warnings: Vec<String>,
     pub http: reqwest::Client,
+}
+
+impl AppState {
+    pub fn session(&self) -> Arc<Session> {
+        self.engine.get().session.clone()
+    }
+
+    pub fn api(&self) -> Api {
+        self.engine.get().api.clone()
+    }
 }
 
 pub struct Resolving {
@@ -148,7 +157,7 @@ pub fn bootstrap(state: tauri::State<'_, AppState>) -> Bootstrap {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned(),
-        bound_interface: state.bound_interface.clone(),
+        bound_interface: state.engine.get().bound_interface.clone(),
         warnings: state.startup_warnings.clone(),
     }
 }
@@ -167,11 +176,11 @@ pub fn list_interfaces() -> Vec<engine::NetInterface> {
 #[tauri::command]
 pub fn save_settings(state: tauri::State<'_, AppState>, next: Settings) -> CmdResult<Settings> {
     state
-        .session
+        .session()
         .ratelimits
         .set_download_bps(engine::kbps_to_bps(next.download_limit_kbps));
     state
-        .session
+        .session()
         .ratelimits
         .set_upload_bps(engine::kbps_to_bps(next.upload_limit_kbps));
     settings::save(&state.paths.settings_file(), &next).map_err(err)?;
@@ -186,19 +195,19 @@ pub fn list_torrents(state: tauri::State<'_, AppState>) -> Vec<TorrentRow> {
 
 /// The torrent list, with upload figures that carry across restarts.
 pub fn rows_with_totals(state: &AppState) -> Vec<TorrentRow> {
-    let mut rows = engine::collect_rows(&state.session);
+    let mut rows = engine::collect_rows(&state.session());
     state.seeding.lock().overlay(&mut rows);
     rows
 }
 
 #[tauri::command]
 pub fn session_stats(state: tauri::State<'_, AppState>) -> SessionSummary {
-    engine::session_summary(&state.session, &state.settings.read())
+    engine::session_summary(&state.session(), &state.settings.read())
 }
 
 #[tauri::command]
 pub fn torrent_detail(state: tauri::State<'_, AppState>, id: usize) -> CmdResult<TorrentDetail> {
-    engine::torrent_detail(&state.api, &state.paths, id).map_err(err)
+    engine::torrent_detail(&state.api(), &state.paths, id).map_err(err)
 }
 
 #[tauri::command]
@@ -208,10 +217,10 @@ pub async fn torrent_action(
     action: String,
 ) -> CmdResult<()> {
     match action.as_str() {
-        "pause" => state.api.api_torrent_action_pause(id.into()).await.map(|_| ()),
-        "start" => state.api.api_torrent_action_start(id.into()).await.map(|_| ()),
-        "forget" => state.api.api_torrent_action_forget(id.into()).await.map(|_| ()),
-        "delete" => state.api.api_torrent_action_delete(id.into()).await.map(|_| ()),
+        "pause" => state.api().api_torrent_action_pause(id.into()).await.map(|_| ()),
+        "start" => state.api().api_torrent_action_start(id.into()).await.map(|_| ()),
+        "forget" => state.api().api_torrent_action_forget(id.into()).await.map(|_| ()),
+        "delete" => state.api().api_torrent_action_delete(id.into()).await.map(|_| ()),
         other => return Err(format!("unknown action: {other}")),
     }
     .map_err(err)
@@ -225,7 +234,7 @@ pub async fn set_file_selection(
 ) -> CmdResult<()> {
     let set: HashSet<usize> = indices.into_iter().collect();
     state
-        .api
+        .api()
         .api_torrent_action_update_only_files(id.into(), &set)
         .await
         .map(|_| ())
@@ -244,7 +253,7 @@ pub struct BlocklistStatus {
 fn blocklist_status_of(state: &AppState) -> BlocklistStatus {
     let meta = std::fs::metadata(state.paths.blocklist_file()).ok();
     BlocklistStatus {
-        active: state.blocklist_active,
+        active: state.engine.get().blocklist_active,
         updated_at: meta
             .as_ref()
             .and_then(|m| m.modified().ok())
@@ -291,6 +300,112 @@ pub async fn download_blocklist(state: &AppState) -> CmdResult<()> {
 pub async fn refresh_blocklist(state: tauri::State<'_, AppState>) -> CmdResult<BlocklistStatus> {
     download_blocklist(&state).await?;
     Ok(blocklist_status_of(&state))
+}
+
+// ---------------------------------------------------------------- engine
+
+#[derive(Serialize)]
+pub struct EngineInfo {
+    pub bound_interface: Option<String>,
+    pub blocklist_active: bool,
+    pub warnings: Vec<String>,
+}
+
+/// Stops the engine and starts it again with the current settings, so network
+/// settings apply without relaunching. Torrents keep their state.
+#[tauri::command]
+pub async fn restart_engine<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+) -> CmdResult<EngineInfo> {
+    let paths = state.paths.clone();
+    restart_engine_with(&app, &state, |settings| {
+        let paths = paths.clone();
+        async move { engine::build_session(&paths, &settings).await }
+    })
+    .await
+}
+
+pub async fn restart_engine_with<R, F, Fut>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+    build: F,
+) -> CmdResult<EngineInfo>
+where
+    R: tauri::Runtime,
+    F: Fn(Settings) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<engine::Engine>>,
+{
+    let _guard = state
+        .restarting
+        .try_lock()
+        .map_err(|_| "the engine is already restarting")?;
+
+    // Lookups belong to the engine that is about to go away.
+    for (_, lookup) in state.resolving.lock().drain() {
+        lookup.task.abort();
+    }
+    let old = state.engine.get();
+    old.session.stop().await;
+
+    let wanted = state.settings.read().clone();
+    let (engine, applied, mut warnings) = match build_with_retries(&build, &wanted).await {
+        Ok(engine) => (engine, wanted, Vec::new()),
+        // Whatever was changed cannot be started, so go back to what worked.
+        Err(e) => {
+            let engine = build_with_retries(&build, &old.applied).await.map_err(|again| {
+                format!("The engine could not be restarted. Relaunch Greenhouse. ({again:#})")
+            })?;
+            let warning = format!("Those settings could not be applied, so the previous ones are still in use: {e:#}");
+            (engine, old.applied.clone(), vec![warning])
+        }
+    };
+    drop(old);
+
+    let mut engine = engine;
+    warnings.append(&mut engine.warnings);
+    state.engine.set(engine::Running::new(engine, applied));
+
+    let waiting: Vec<String> = {
+        let staged = state.staged.lock();
+        staged
+            .iter()
+            .filter(|(_, s)| s.queued.is_some())
+            .map(|(token, _)| token.clone())
+            .collect()
+    };
+    {
+        let _staged = state.staged.lock();
+        for token in &waiting {
+            ensure_resolving(app, state, token);
+        }
+    }
+
+    let running = state.engine.get();
+    Ok(EngineInfo {
+        bound_interface: running.bound_interface.clone(),
+        blocklist_active: running.blocklist_active,
+        warnings,
+    })
+}
+
+/// The old engine's ports can take a moment to come free.
+async fn build_with_retries<F, Fut>(build: &F, settings: &Settings) -> anyhow::Result<engine::Engine>
+where
+    F: Fn(Settings) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<engine::Engine>>,
+{
+    let mut last = None;
+    for attempt in 0..5 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(700)).await;
+        }
+        match build(settings.clone()).await {
+            Ok(engine) => return Ok(engine),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| anyhow::anyhow!("the engine did not start")))
 }
 
 // ----------------------------------------------------------------- feeds
@@ -373,10 +488,10 @@ pub async fn play_file(
     use tauri_plugin_opener::OpenerExt;
 
     let handle = state
-        .session
+        .session()
         .get(id.into())
         .ok_or("that torrent is no longer in the session")?;
-    let details = state.api.api_torrent_details(id.into()).map_err(err)?;
+    let details = state.api().api_torrent_details(id.into()).map_err(err)?;
     let files = details.files.unwrap_or_default();
     let file = files.get(file_index).ok_or("that file is not in the torrent")?;
 
@@ -399,13 +514,13 @@ pub async fn play_file(
                 .map(|(index, _)| index)
                 .collect();
             state
-                .api
+                .api()
                 .api_torrent_action_update_only_files(id.into(), &wanted)
                 .await
                 .map_err(err)?;
         }
         if handle.is_paused() {
-            state.api.api_torrent_action_start(id.into()).await.map_err(err)?;
+            state.api().api_torrent_action_start(id.into()).await.map_err(err)?;
         }
         let server = state.stream.as_ref().ok_or("streaming could not be started")?;
         server.url(id, file_index, &file.name)
@@ -480,7 +595,7 @@ pub async fn stage_source(
     // A .torrent file carries its own metadata, so the file list is available
     // immediately without touching the network.
     if staged.bytes.is_some() {
-        if let Ok(resolved) = resolve(&state.session, &staged, &[]).await {
+        if let Ok(resolved) = resolve(&state.session(), &staged, &[]).await {
             staged = resolved;
         }
     }
@@ -661,7 +776,7 @@ async fn lookup(state: &AppState, token: &str) -> CmdResult<Staged> {
         .cloned()
         .ok_or("that torrent is no longer staged")?;
     let extra = state.settings.read().active_trackers();
-    let mut resolved = resolve(&state.session, &staged, &extra).await.map_err(err)?;
+    let mut resolved = resolve(&state.session(), &staged, &extra).await.map_err(err)?;
     resolved.skipped = skipped_indices(&resolved.files, &state.settings.read());
     Ok(resolved)
 }
@@ -984,7 +1099,7 @@ pub async fn add_file_with_defaults(
         resolved: false,
         queued: None,
     };
-    let mut staged = resolve(&state.session, &staged, &[]).await.map_err(err)?;
+    let mut staged = resolve(&state.session(), &staged, &[]).await.map_err(err)?;
     staged.skipped = skipped_indices(&staged.files, &state.settings.read());
 
     let request = {
@@ -1069,7 +1184,7 @@ async fn commit_resolved(
     };
 
     let response = state
-        .session
+        .session()
         .add_torrent(add, Some(opts))
         .await
         .map_err(err)?;
@@ -1204,7 +1319,7 @@ async fn apply_trackers_inner(
     replace: bool,
 ) -> CmdResult<ApplyTrackersResult> {
     let handle = state
-        .session
+        .session()
         .get(id.into())
         .ok_or("that torrent is no longer in the session")?;
 
@@ -1239,7 +1354,7 @@ async fn apply_trackers_inner(
         });
 
     state
-        .session
+        .session()
         .delete(id.into(), false)
         .await
         .map_err(|e| format!("could not detach the torrent: {e}"))?;
@@ -1257,7 +1372,7 @@ async fn apply_trackers_inner(
         ..Default::default()
     };
 
-    let response = match state.session.add_torrent(add, Some(opts)).await {
+    let response = match state.session().add_torrent(add, Some(opts)).await {
         Ok(response) => response,
         Err(e) => {
             // Re-attaching failed, so put the torrent back as it was rather
@@ -1267,7 +1382,7 @@ async fn apply_trackers_inner(
                 None => AddTorrent::from_url(magnet_for(&info_hash, name.as_deref(), &existing)),
             };
             let restored = state
-                .session
+                .session()
                 .add_torrent(
                     rollback,
                     Some(AddTorrentOptions {
@@ -1321,7 +1436,7 @@ pub async fn apply_trackers_to_all(
     state: tauri::State<'_, AppState>,
     trackers: Vec<String>,
 ) -> CmdResult<usize> {
-    let ids: Vec<usize> = engine::collect_rows(&state.session)
+    let ids: Vec<usize> = engine::collect_rows(&state.session())
         .iter()
         .map(|r| r.id)
         .collect();
@@ -1361,7 +1476,7 @@ async fn apply_to_each(
 #[tauri::command]
 pub fn magnet_link(state: tauri::State<'_, AppState>, id: usize) -> CmdResult<String> {
     let handle = state
-        .session
+        .session()
         .get(id.into())
         .ok_or("that torrent is no longer in the session")?;
     let trackers: Vec<String> = handle
@@ -1399,7 +1514,7 @@ pub async fn forget_torrent(
 
 pub async fn forget_inner(state: &AppState, id: usize) -> CmdResult<RestoreToken> {
     let handle = state
-        .session
+        .session()
         .get(id.into())
         .ok_or("that torrent is no longer in the session")?;
     let token = RestoreToken {
@@ -1420,7 +1535,7 @@ pub async fn forget_inner(state: &AppState, id: usize) -> CmdResult<RestoreToken
         let _ = tokio::fs::write(state.paths.source_file(&token.info_hash), &bytes).await;
     }
     state
-        .session
+        .session()
         .delete(id.into(), false)
         .await
         .map_err(|e| format!("could not remove the torrent: {e}"))?;
@@ -1448,7 +1563,7 @@ pub async fn restore_inner(state: &AppState, token: RestoreToken) -> CmdResult<u
         )),
     };
     let response = state
-        .session
+        .session()
         .add_torrent(
             add,
             Some(AddTorrentOptions {
@@ -1554,13 +1669,23 @@ mod tests {
         let paths = Paths {
             config_dir: root.join("config"),
             data_dir: root.join("data"),
+            dht_file: Some(root.join("dht.json")),
         };
         std::fs::create_dir_all(paths.data_dir.join("sources")).unwrap();
 
         let app = tauri::test::mock_app();
+        let running = engine::Running::new(
+            engine::Engine {
+                session,
+                bound_interface: None,
+                blocklist_active: false,
+                warnings: vec![],
+            },
+            settings.clone(),
+        );
         app.manage(AppState {
-            api: Api::new(session.clone(), None),
-            session,
+            engine: Arc::new(engine::EngineSlot::new(running)),
+            restarting: tokio::sync::Mutex::new(()),
             settings: RwLock::new(settings),
             paths,
             staged: Mutex::new(HashMap::new()),
@@ -1569,8 +1694,6 @@ mod tests {
             feeds: Mutex::new(FeedsState::default()),
             activity: Mutex::new(ActivityLog::load(root.join("activity.json"))),
             stream: None,
-            bound_interface: None,
-            blocklist_active: false,
             startup_warnings: vec![],
             http: reqwest::Client::new(),
         });
@@ -1693,7 +1816,7 @@ mod tests {
                 .unwrap();
             assert!(payload.contains("\"pending\":false"), "{payload}");
             let state = app.state::<AppState>();
-            assert_eq!(engine::collect_rows(&state.session).len(), 1);
+            assert_eq!(engine::collect_rows(&state.session()).len(), 1);
             assert!(state.staged.lock().is_empty());
             assert!(pending_adds(&state).is_empty());
         });
@@ -1804,7 +1927,7 @@ mod tests {
             .as_bytes()
             .unwrap();
             let added = state
-                .session
+                .session()
                 .add_torrent(
                     AddTorrent::from_bytes(torrent),
                     Some(AddTorrentOptions {
@@ -1823,7 +1946,7 @@ mod tests {
                 _ => panic!("not added"),
             };
 
-            let server = crate::stream::start(state.api.clone()).await.unwrap();
+            let server = crate::stream::start(state.engine.clone()).await.unwrap();
             let url = server.url(id, 0, "film.mkv");
             let part = reqwest::Client::new()
                 .get(&url)
@@ -1855,19 +1978,19 @@ mod tests {
             let state = app.state::<AppState>();
             let magnet = "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny";
             let added = state
-                .session
+                .session()
                 .add_torrent(AddTorrent::from_url(magnet), Some(AddTorrentOptions { overwrite: true, ..Default::default() }))
                 .await
                 .unwrap();
             let AddTorrentResponse::Added(id, handle) = added else { panic!("not added") };
             handle.wait_until_initialized().await.unwrap();
 
-            let details = state.api.api_torrent_details(id.into()).unwrap();
+            let details = state.api().api_torrent_details(id.into()).unwrap();
             let files = details.files.unwrap();
             let (index, video) = files.iter().enumerate().max_by_key(|(_, f)| f.length).unwrap();
             assert!(handle.stats().file_progress[index] < video.length, "already downloaded");
 
-            let server = crate::stream::start(state.api.clone()).await.unwrap();
+            let server = crate::stream::start(state.engine.clone()).await.unwrap();
             let response = reqwest::Client::new()
                 .get(server.url(id, index, &video.name))
                 .header("Range", "bytes=0-262143")
@@ -1880,7 +2003,7 @@ mod tests {
                 .expect("the start of the file never arrived")
                 .unwrap();
             assert_eq!(body.len(), 262_144);
-            let _ = state.session.delete(id.into(), true).await;
+            let _ = state.session().delete(id.into(), true).await;
         });
     }
 
@@ -1911,6 +2034,116 @@ mod tests {
 
             discard_staged(second.state(), pending[0].token.clone());
             assert_eq!(std::fs::read_to_string(to.paths.queued_file()).unwrap(), "[]");
+        });
+    }
+
+    /// An engine for restart tests: offline, but it remembers its torrents.
+    async fn persistent_engine(root: PathBuf, settings: Settings) -> anyhow::Result<engine::Engine> {
+        anyhow::ensure!(settings.listen_port != 1, "port 1 is not ours to take");
+        let session = Session::new_with_opts(
+            root.join("downloads"),
+            librqbit::SessionOptions {
+                dht: None,
+                listen: None,
+                disable_local_service_discovery: true,
+                fastresume: true,
+                persistence: Some(librqbit::SessionPersistenceConfig::Json {
+                    folder: Some(root.join("session")),
+                }),
+                ..Default::default()
+            },
+        )
+        .await?;
+        Ok(engine::Engine {
+            session,
+            bound_interface: Some(format!("port-{}", settings.listen_port)),
+            blocklist_active: false,
+            warnings: vec![],
+        })
+    }
+
+    /// Restarting the engine swaps it for a new one without losing torrents or
+    /// the magnets still waiting, and bad settings fall back to the last good ones.
+    #[test]
+    fn the_engine_restarts_in_place() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("restart", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let build = |settings: Settings| persistent_engine(root.clone(), settings);
+            restart_engine_with(app.handle(), &state, build).await.unwrap();
+
+            let payload = root.join("payload");
+            std::fs::create_dir_all(&payload).unwrap();
+            std::fs::write(payload.join("a.bin"), vec![7u8; 40_000]).unwrap();
+            let torrent = librqbit::create_torrent(
+                &payload,
+                librqbit::CreateTorrentOptions { name: None, trackers: vec![], piece_length: None },
+                &librqbit::spawn_utils::BlockingSpawner::new(1),
+            )
+            .await
+            .unwrap()
+            .as_bytes()
+            .unwrap();
+            let added = add_file_with_defaults(&state, "a".into(), torrent).await.unwrap();
+            let magnet =
+                format!("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Waiting{QUIET_TRACKER}");
+            let token = stage_magnet(&app, magnet).await;
+            commit_staged(app.handle().clone(), app.state(), commit_request(&token)).await.unwrap();
+
+            let before = state.session();
+            state.settings.write().listen_port = 4242;
+            let info = restart_engine_with(app.handle(), &state, build).await.unwrap();
+
+            assert!(!Arc::ptr_eq(&before, &state.session()));
+            assert_eq!(info.bound_interface.as_deref(), Some("port-4242"));
+            assert!(info.warnings.is_empty());
+            let rows = engine::collect_rows(&state.session());
+            assert_eq!(rows.len(), 1);
+            assert_eq!(Some(rows[0].id), added.id);
+            assert_ne!(rows[0].state, "paused");
+            assert_eq!(pending_adds(&state).len(), 1);
+            assert_eq!(state.resolving.lock().len(), 1);
+
+            state.settings.write().listen_port = 1;
+            let info = restart_engine_with(app.handle(), &state, build).await.unwrap();
+            assert_eq!(info.bound_interface.as_deref(), Some("port-4242"));
+            assert!(info.warnings[0].contains("previous ones are still in use"));
+            assert_eq!(engine::collect_rows(&state.session()).len(), 1);
+        });
+    }
+
+    /// Uses the network: the real engine comes back on the same port.
+    #[test]
+    #[ignore]
+    fn the_real_engine_restarts_on_its_port() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("real-restart", false).await;
+            let state = app.state::<AppState>();
+            let port = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+            {
+                let mut settings = state.settings.write();
+                settings.listen_port = port;
+                settings.enable_upnp = false;
+            }
+            std::fs::create_dir_all(state.paths.session_dir()).unwrap();
+            let paths = state.paths.clone();
+            let build = |settings: Settings| {
+                let paths = paths.clone();
+                async move { engine::build_session(&paths, &settings).await }
+            };
+
+            restart_engine_with(app.handle(), &state, build).await.unwrap();
+            assert_eq!(state.session().announce_port(), Some(port));
+            let first = state.session();
+
+            let info = restart_engine_with(app.handle(), &state, build).await.unwrap();
+            assert!(info.warnings.is_empty(), "{:?}", info.warnings);
+            assert!(!Arc::ptr_eq(&first, &state.session()));
+            assert_eq!(state.session().announce_port(), Some(port));
         });
     }
 
@@ -1946,7 +2179,7 @@ mod tests {
             let second = add_file_with_defaults(&state, "a".into(), torrent).await.unwrap();
             assert!(second.already);
             assert_eq!(second.id, first.id);
-            assert_eq!(engine::collect_rows(&state.session).len(), 1);
+            assert_eq!(engine::collect_rows(&state.session()).len(), 1);
             assert!(settings::load_pending_moves(&state.paths.pending_moves_file()).is_empty());
         });
     }
@@ -1992,7 +2225,7 @@ mod tests {
             crate::watch::scan(app.handle(), Duration::ZERO).await;
             crate::watch::scan(app.handle(), Duration::ZERO).await;
 
-            assert_eq!(engine::collect_rows(&state.session).len(), 1);
+            assert_eq!(engine::collect_rows(&state.session()).len(), 1);
             assert!(added.try_recv().is_ok());
             assert!(added.try_recv().is_err(), "added twice");
             assert!(failed.try_recv().unwrap().contains("broken.torrent"));

@@ -76,7 +76,7 @@ impl Supervisor {
                 .collect()
         };
         for (row, reason) in due {
-            if state.api.api_torrent_action_pause(row.id.into()).await.is_ok() {
+            if state.api().api_torrent_action_pause(row.id.into()).await.is_ok() {
                 {
                     let mut ledger = state.seeding.lock();
                     ledger.mark_done(&row.info_hash);
@@ -232,11 +232,11 @@ impl Supervisor {
             let is_stopped = row.state == "paused" || row.state == "complete";
 
             if should_run && is_stopped && self.queued.contains(&row.info_hash) {
-                if state.api.api_torrent_action_start(row.id.into()).await.is_ok() {
+                if state.api().api_torrent_action_start(row.id.into()).await.is_ok() {
                     self.queued.remove(&row.info_hash);
                 }
             } else if !should_run && !is_stopped {
-                if state.api.api_torrent_action_pause(row.id.into()).await.is_ok() {
+                if state.api().api_torrent_action_pause(row.id.into()).await.is_ok() {
                     self.queued.insert(row.info_hash.clone());
                 }
             }
