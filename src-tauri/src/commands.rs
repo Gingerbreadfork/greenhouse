@@ -1139,27 +1139,26 @@ async fn commit_resolved(
 ) -> CmdResult<CommitResult> {
     let trackers = commit_trackers(state, staged, request);
 
-    let (session_default, incomplete_dir) = {
+    let (chosen, incomplete_dir) = {
         let settings = state.settings.read();
-        (settings.download_dir.clone(), settings.incomplete_dir.trim().to_string())
+        let chosen = match request.download_dir.trim() {
+            "" => settings.download_dir.clone(),
+            dir => dir.to_string(),
+        };
+        (chosen, settings.incomplete_dir.trim().to_string())
     };
+    // The engine's own default is the folder it was started with, which is
+    // not the current setting if that has changed since.
+    let engine_default = state.engine.get().applied.download_dir.clone();
 
     // With an incomplete folder set, torrents land in their own sub-folder
     // there and move to the real destination on completion.
     let (output_folder, pending_final) = if incomplete_dir.is_empty() {
-        (
-            resolve_output_folder(&request.download_dir, &session_default, staged),
-            None,
-        )
+        (resolve_output_folder(&chosen, &engine_default, staged), None)
     } else {
-        let destination = if request.download_dir.trim().is_empty() {
-            session_default.clone()
-        } else {
-            request.download_dir.clone()
-        };
         (
             Some(staging_folder(&incomplete_dir, staged)),
-            Some(explicit_output_folder(&destination, staged)),
+            Some(explicit_output_folder(&chosen, staged)),
         )
     };
 
@@ -2144,6 +2143,41 @@ mod tests {
             assert!(info.warnings.is_empty(), "{:?}", info.warnings);
             assert!(!Arc::ptr_eq(&first, &state.session()));
             assert_eq!(state.session().announce_port(), Some(port));
+        });
+    }
+
+    /// A download folder changed in the settings is used straight away, not
+    /// only after the engine next starts.
+    #[test]
+    fn a_changed_download_folder_applies_to_the_next_add() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("folder", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let payload = root.join("payload");
+            std::fs::create_dir_all(&payload).unwrap();
+            std::fs::write(payload.join("a.bin"), b"some bytes").unwrap();
+            let torrent = librqbit::create_torrent(
+                &payload,
+                librqbit::CreateTorrentOptions { name: None, trackers: vec![], piece_length: None },
+                &librqbit::spawn_utils::BlockingSpawner::new(1),
+            )
+            .await
+            .unwrap()
+            .as_bytes()
+            .unwrap();
+
+            let elsewhere = root.join("elsewhere").to_string_lossy().into_owned();
+            {
+                let mut settings = state.settings.write();
+                settings.download_dir = elsewhere.clone();
+                settings.start_paused = true;
+            }
+            add_file_with_defaults(&state, "a".into(), torrent).await.unwrap();
+            assert_eq!(engine::collect_rows(&state.session())[0].output_folder, elsewhere);
         });
     }
 
