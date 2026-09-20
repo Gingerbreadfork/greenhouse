@@ -11,6 +11,7 @@ use tauri::{Emitter, Manager};
 use tokio::sync::watch;
 
 use crate::engine::{self, SessionSummary, TorrentDetail, TorrentRow};
+use crate::feeds::{self, FeedStatus, FeedsState};
 use crate::seeding::SeedLedger;
 use crate::stream::StreamServer;
 use crate::settings::{self, Paths, Settings};
@@ -25,6 +26,7 @@ pub struct AppState {
     /// Metadata lookups in flight, by staged token. Locked after `staged`.
     pub resolving: Mutex<HashMap<String, Resolving>>,
     pub seeding: Mutex<SeedLedger>,
+    pub feeds: Mutex<FeedsState>,
     /// Serves files to a media player while they download.
     pub stream: Option<StreamServer>,
     pub bound_interface: Option<String>,
@@ -279,6 +281,43 @@ pub async fn refresh_blocklist(state: tauri::State<'_, AppState>) -> CmdResult<B
     Ok(blocklist_status_of(&state))
 }
 
+// ----------------------------------------------------------------- feeds
+
+#[tauri::command]
+pub fn feeds_status(state: tauri::State<'_, AppState>) -> HashMap<String, FeedStatus> {
+    state.feeds.lock().statuses()
+}
+
+fn feed_by_id(state: &AppState, id: &str) -> CmdResult<feeds::Feed> {
+    let settings = state.settings.read();
+    let feed = settings.feeds.iter().find(|f| f.id == id);
+    feed.cloned().ok_or_else(|| "that feed no longer exists".to_string())
+}
+
+#[tauri::command]
+pub async fn check_feed<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> CmdResult<FeedStatus> {
+    let feed = feed_by_id(&state, &id)?;
+    if feed.url.trim().is_empty() {
+        return Err("give the feed an address first".into());
+    }
+    Ok(feeds::check(&app, &feed).await)
+}
+
+#[tauri::command]
+pub fn add_feed_item<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    feed_id: String,
+    guid: String,
+) -> CmdResult<()> {
+    let feed = feed_by_id(&state, &feed_id)?;
+    feeds::add_item(&app, &feed, &guid)
+}
+
 // --------------------------------------------------------------- playing
 
 const PLAYERS: &[&str] = &["mpv", "vlc", "celluloid", "haruna", "smplayer", "totem"];
@@ -423,30 +462,7 @@ pub async fn stage_source(
                 queued: None,
             }
         }
-        _ => {
-            let value = request.value.trim().to_string();
-            if !torrentsrc::looks_like_source(&value) {
-                return Err("That does not look like a magnet link, torrent URL or info hash.".into());
-            }
-            let parsed = torrentsrc::parse_magnet(&value);
-            Staged {
-                kind: if value.starts_with("magnet:") {
-                    "magnet".into()
-                } else {
-                    "url".into()
-                },
-                source: value,
-                bytes: None,
-                info_hash: parsed.info_hash,
-                name: parsed.name,
-                total_bytes: parsed.size.unwrap_or(0),
-                trackers: parsed.trackers,
-                files: Vec::new(),
-                skipped: Vec::new(),
-                resolved: false,
-                queued: None,
-            }
-        }
+        _ => staged_from_text(&request.value)?,
     };
 
     // A .torrent file carries its own metadata, so the file list is available
@@ -461,6 +477,70 @@ pub async fn stage_source(
     let token = uuid::Uuid::new_v4().to_string();
     state.staged.lock().insert(token.clone(), staged.clone());
     Ok(StagedInfo::from(token, &staged))
+}
+
+/// A magnet link, torrent URL or info hash, staged with what it says about itself.
+fn staged_from_text(value: &str) -> CmdResult<Staged> {
+    let value = value.trim().to_string();
+    if !torrentsrc::looks_like_source(&value) {
+        return Err("That does not look like a magnet link, torrent URL or info hash.".into());
+    }
+    let parsed = torrentsrc::parse_magnet(&value);
+    Ok(Staged {
+        kind: if value.starts_with("magnet:") {
+            "magnet".into()
+        } else {
+            "url".into()
+        },
+        source: value,
+        bytes: None,
+        info_hash: parsed.info_hash,
+        name: parsed.name,
+        total_bytes: parsed.size.unwrap_or(0),
+        trackers: parsed.trackers,
+        files: Vec::new(),
+        skipped: Vec::new(),
+        resolved: false,
+        queued: None,
+    })
+}
+
+/// Queues a magnet link or torrent URL with the saved defaults. It is added
+/// in the background once its metadata arrives.
+pub fn queue_with_defaults<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    source: String,
+    name: Option<String>,
+    download_dir: Option<String>,
+) -> CmdResult<()> {
+    let state = app.state::<AppState>();
+    let mut entry = staged_from_text(&source)?;
+    entry.name = entry.name.or(name);
+
+    let token = uuid::Uuid::new_v4().to_string();
+    let request = {
+        let settings = state.settings.read();
+        CommitRequest {
+            token: token.clone(),
+            download_dir: download_dir.unwrap_or_else(|| settings.download_dir.clone()),
+            start_paused: settings.start_paused,
+            use_auto_packs: settings.auto_apply_trackers,
+            pack_ids: Vec::new(),
+            extra_trackers: Vec::new(),
+            selected_files: None,
+        }
+    };
+    entry.queued = Some(Queued {
+        request,
+        since: SystemTime::now(),
+    });
+    {
+        let mut staged = state.staged.lock();
+        staged.insert(token.clone(), entry);
+        ensure_resolving(app, &state, &token);
+    }
+    save_queue(&state);
+    Ok(())
 }
 
 /// Files whose extension the user has chosen not to download by default.
@@ -1438,6 +1518,7 @@ mod tests {
             staged: Mutex::new(HashMap::new()),
             resolving: Mutex::new(HashMap::new()),
             seeding: Mutex::new(SeedLedger::default()),
+            feeds: Mutex::new(FeedsState::default()),
             stream: None,
             bound_interface: None,
             blocklist_active: false,
@@ -1564,6 +1645,74 @@ mod tests {
             assert_eq!(engine::collect_rows(&state.session).len(), 1);
             assert!(state.staged.lock().is_empty());
             assert!(pending_adds(&state).is_empty());
+        });
+    }
+
+    fn rss(items: &[(&str, &str)]) -> String {
+        let body: String = items
+            .iter()
+            .map(|(guid, title)| {
+                format!(
+                    "<item><title>{title}</title><guid>{guid}</guid>\
+                     <link>magnet:?xt=urn:btih:{guid:0>40}&amp;dn={guid}{}</link></item>",
+                    QUIET_TRACKER.replace('&', "&amp;")
+                )
+            })
+            .collect();
+        format!("<rss version=\"2.0\"><channel><title>t</title>{body}</channel></rss>")
+    }
+
+    /// Checking a feed queues new items that pass its filters, and only those.
+    #[test]
+    fn a_feed_queues_new_matching_items() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("feeds", false).await;
+            let state = app.state::<AppState>();
+
+            let served = Arc::new(Mutex::new(rss(&[("1", "Show E01 1080p")])));
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let router = axum::Router::new().route(
+                "/feed",
+                axum::routing::get({
+                    let served = served.clone();
+                    move || async move { served.lock().clone() }
+                }),
+            );
+            tokio::spawn(async move { axum::serve(listener, router).await });
+
+            let feed = feeds::Feed {
+                id: "shows".into(),
+                name: "Shows".into(),
+                url: format!("http://127.0.0.1:{port}/feed"),
+                enabled: true,
+                must_contain: "1080p".into(),
+                download_dir: "/films".into(),
+                ..Default::default()
+            };
+
+            let first = feeds::check(app.handle(), &feed).await;
+            assert_eq!(first.error, None);
+            assert_eq!(first.items.len(), 1);
+            assert!(pending_adds(&state).is_empty(), "the backlog was downloaded");
+
+            *served.lock() = rss(&[("3", "Show E02 480p"), ("2", "Show E02 1080p"), ("1", "Show E01 1080p")]);
+            let second = feeds::check(app.handle(), &feed).await;
+            let pending = pending_adds(&state);
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].name, "2");
+            assert!(second.items.iter().find(|i| i.guid == "2").unwrap().added);
+            let queued = state.staged.lock()[&pending[0].token].queued.clone().unwrap();
+            assert_eq!(queued.request.download_dir, "/films");
+
+            feeds::check(app.handle(), &feed).await;
+            assert_eq!(pending_adds(&state).len(), 1, "added twice");
+
+            feeds::add_item(app.handle(), &feed, "3").unwrap();
+            assert_eq!(pending_adds(&state).len(), 2);
+
+            let gone = feeds::Feed { url: format!("http://127.0.0.1:{port}/missing"), ..feed };
+            assert!(feeds::check(app.handle(), &gone).await.error.unwrap().contains("404"));
         });
     }
 

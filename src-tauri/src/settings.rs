@@ -76,6 +76,9 @@ pub struct Settings {
     /// Program that plays media files. Empty means find one.
     pub player_command: String,
     pub packs: Vec<TrackerPack>,
+    pub feeds: Vec<crate::feeds::Feed>,
+    /// How often feeds are checked.
+    pub feed_interval_minutes: u32,
 }
 
 impl Default for Settings {
@@ -109,6 +112,8 @@ impl Default for Settings {
             notify_on_done: true,
             player_command: String::new(),
             packs: vec![starter_pack()],
+            feeds: Vec::new(),
+            feed_interval_minutes: 30,
         }
     }
 }
@@ -193,6 +198,11 @@ impl Paths {
     /// should end up once it finishes.
     pub fn pending_moves_file(&self) -> PathBuf {
         self.data_dir.join("incomplete.json")
+    }
+
+    /// Feed items that have already been dealt with.
+    pub fn feeds_file(&self) -> PathBuf {
+        self.data_dir.join("feeds.json")
     }
 
     /// Magnets that were confirmed but had no metadata yet when we last quit.

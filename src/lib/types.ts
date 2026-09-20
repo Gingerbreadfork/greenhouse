@@ -120,6 +120,8 @@ export interface Settings {
   notify_on_done: boolean;
   player_command: string;
   packs: TrackerPack[];
+  feeds: Feed[];
+  feed_interval_minutes: number;
 }
 
 export interface Bootstrap {
@@ -130,6 +132,36 @@ export interface Bootstrap {
   /** The interface traffic is tied to for this run, if any. */
   bound_interface: string | null;
   warnings: string[];
+}
+
+export interface Feed {
+  id: string;
+  name: string;
+  url: string;
+  /** Whether new matching items are added on their own. */
+  enabled: boolean;
+  /** Comma-separated words a title must all contain. */
+  must_contain: string;
+  /** Comma-separated words that rule a title out. */
+  must_not_contain: string;
+  /** Empty means the usual download folder. */
+  download_dir: string;
+}
+
+export interface FeedItem {
+  guid: string;
+  title: string;
+  link: string;
+  published: string | null;
+  matches: boolean;
+  added: boolean;
+}
+
+export interface FeedStatus {
+  /** Seconds since 1970. */
+  checked_at: number | null;
+  error: string | null;
+  items: FeedItem[];
 }
 
 export interface PlayResult {

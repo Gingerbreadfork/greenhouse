@@ -2,7 +2,7 @@ import { listen } from '@tauri-apps/api/event';
 import { api } from './api';
 import type { CommitResult, PendingAdd, SessionSummary, Settings, TorrentRow } from './types';
 
-export type View = 'torrents' | 'trackers' | 'stats' | 'settings' | 'about';
+export type View = 'torrents' | 'trackers' | 'feeds' | 'stats' | 'settings' | 'about';
 export type Filter = 'all' | 'downloading' | 'seeding' | 'paused' | 'finished' | 'issues';
 export type SortKey = 'added' | 'name' | 'progress' | 'size' | 'down' | 'up' | 'ratio';
 

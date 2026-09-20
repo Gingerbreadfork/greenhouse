@@ -261,6 +261,27 @@ export const settings: Settings = {
   seed_time_limit_minutes: 0,
   notify_on_done: true,
   player_command: '',
+  feed_interval_minutes: 30,
+  feeds: [
+    {
+      id: 'feed-arch',
+      name: 'Arch Linux releases',
+      url: 'https://archlinux.org/feeds/releases/',
+      enabled: true,
+      must_contain: '',
+      must_not_contain: '',
+      download_dir: ''
+    },
+    {
+      id: 'feed-films',
+      name: 'Open films',
+      url: 'https://films.example/rss',
+      enabled: false,
+      must_contain: '2160p, hevc',
+      must_not_contain: 'cam',
+      download_dir: '/home/you/Films'
+    }
+  ],
   packs: [
     {
       id: 'starter',
@@ -355,4 +376,34 @@ export const detail = {
     }
   },
   added_source: null
+};
+
+const feedItem = (guid: string, title: string, matches: boolean, added: boolean, days: number) => ({
+  guid,
+  title,
+  link: `https://example.org/${guid}.torrent`,
+  published: new Date(Date.now() - days * 86_400_000).toISOString(),
+  matches,
+  added
+});
+
+export const feedStatus = {
+  'feed-arch': {
+    checked_at: Math.floor(Date.now() / 1000) - 540,
+    error: null,
+    items: [
+      feedItem('arch-2026-09', 'archlinux-2026.09.01-x86_64.iso', true, true, 20),
+      feedItem('arch-2026-08', 'archlinux-2026.08.01-x86_64.iso', true, false, 51),
+      feedItem('arch-2026-07', 'archlinux-2026.07.01-x86_64.iso', true, false, 82)
+    ]
+  },
+  'feed-films': {
+    checked_at: Math.floor(Date.now() / 1000) - 4000,
+    error: null,
+    items: [
+      feedItem('film-3', 'Spring (2019) 2160p HEVC open movie', true, false, 2),
+      feedItem('film-2', 'Spring (2019) 1080p', false, false, 2),
+      feedItem('film-1', 'Hero (2018) 2160p HEVC CAM', false, false, 9)
+    ]
+  }
 };

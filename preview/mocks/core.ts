@@ -1,4 +1,4 @@
-import { detail, filmFiles, session, settings, torrents } from '../fixtures';
+import { detail, feedStatus, filmFiles, session, settings, torrents } from '../fixtures';
 
 const empty = typeof location !== 'undefined' && location.search.includes('empty');
 let live = empty ? [] : torrents.map((t) => ({ ...t }));
@@ -22,6 +22,17 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
         bound_interface: null,
         warnings: []
       } as T;
+    case 'feeds_status':
+      return feedStatus as T;
+    case 'check_feed':
+      await delay(700);
+      return (feedStatus[args?.id as keyof typeof feedStatus] ?? {
+        checked_at: Math.floor(Date.now() / 1000),
+        error: null,
+        items: []
+      }) as T;
+    case 'add_feed_item':
+      return undefined as T;
     case 'play_file':
       return { player: 'mpv', streaming: true } as T;
     case 'blocklist_status':

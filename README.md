@@ -73,6 +73,11 @@ are remembered when you quit and carry on looking at the next launch.
 **Watch folder.** Name a folder and any `.torrent` file saved into it is added
 with your defaults, then renamed so it is not picked up twice.
 
+**Feeds.** Follow an RSS or Atom feed and new releases are added as they are
+published, filtered by words a title must or must not contain, each feed into
+its own folder if you like. A feed's existing backlog is never downloaded on
+its own; add any listed item by hand.
+
 **Add without asking.** Turn on *Add new torrents without asking* in Settings
 and magnets and `.torrent` files are added straight away with your saved
 folder, tracker packs and skipped file types, with no sheet in between.

@@ -5,6 +5,7 @@ import type {
   Bootstrap,
   BlocklistStatus,
   CommitResult,
+  FeedStatus,
   NetInterface,
   PlayResult,
   SessionSummary,
@@ -30,6 +31,11 @@ export const api = {
 
   playFile: (id: number, fileIndex: number) =>
     invoke<PlayResult>('play_file', { id, fileIndex }),
+
+  feedsStatus: () => invoke<Record<string, FeedStatus>>('feeds_status'),
+  checkFeed: (id: string) => invoke<FeedStatus>('check_feed', { id }),
+  addFeedItem: (feedId: string, guid: string) =>
+    invoke<void>('add_feed_item', { feedId, guid }),
 
   stageSource: (kind: 'text' | 'file', value: string) =>
     invoke<StagedInfo>('stage_source', { request: { kind, value } }),

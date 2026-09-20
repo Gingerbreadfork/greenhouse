@@ -58,6 +58,19 @@
     <li>
       <button
         class="item"
+        class:on={store.view === 'feeds'}
+        onclick={() => (store.view = 'feeds')}
+      >
+        <Icon name="rss" size={15} />
+        <span class="label">Feeds</span>
+        {#if store.settings?.feeds.some((f) => f.enabled)}
+          <span class="dot" title="Adding new items automatically"></span>
+        {/if}
+      </button>
+    </li>
+    <li>
+      <button
+        class="item"
         class:on={store.view === 'stats'}
         onclick={() => (store.view = 'stats')}
       >
