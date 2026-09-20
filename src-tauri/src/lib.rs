@@ -4,6 +4,7 @@ mod engine;
 mod seeding;
 mod supervisor;
 mod settings;
+mod stream;
 mod torrentsrc;
 mod watch;
 
@@ -61,6 +62,7 @@ pub fn run() {
             let session = engine.session;
             let api = Api::new(session.clone(), None);
             let seeding = seeding::SeedLedger::load(&paths.seeding_file());
+            let stream = tauri::async_runtime::block_on(stream::start(api.clone())).ok();
 
             app.manage(AppState {
                 session: session.clone(),
@@ -70,6 +72,7 @@ pub fn run() {
                 staged: Mutex::new(HashMap::new()),
                 resolving: Mutex::new(HashMap::new()),
                 seeding: Mutex::new(seeding),
+                stream,
                 bound_interface: engine.bound_interface,
                 blocklist_active: engine.blocklist_active,
                 startup_warnings: engine.warnings,
@@ -98,6 +101,7 @@ pub fn run() {
             commands::torrent_detail,
             commands::torrent_action,
             commands::set_file_selection,
+            commands::play_file,
             commands::stage_source,
             commands::resolve_staged,
             commands::discard_staged,

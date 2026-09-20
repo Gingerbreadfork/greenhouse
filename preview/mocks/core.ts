@@ -1,4 +1,4 @@
-import { detail, session, settings, torrents } from '../fixtures';
+import { detail, filmFiles, session, settings, torrents } from '../fixtures';
 
 const empty = typeof location !== 'undefined' && location.search.includes('empty');
 let live = empty ? [] : torrents.map((t) => ({ ...t }));
@@ -22,6 +22,8 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
         bound_interface: null,
         warnings: []
       } as T;
+    case 'play_file':
+      return { player: 'mpv', streaming: true } as T;
     case 'blocklist_status':
       return { active: false, updated_at: null, bytes: 0 } as T;
     case 'refresh_blocklist':
@@ -41,7 +43,7 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
     case 'session_stats':
       return state.session as T;
     case 'torrent_detail':
-      return { ...detail, id: args?.id } as T;
+      return { ...detail, id: args?.id, files: args?.id === 2 ? filmFiles : detail.files } as T;
     case 'stage_source':
       return {
         token: 'preview',

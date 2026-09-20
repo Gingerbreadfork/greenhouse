@@ -175,6 +175,20 @@
     </div>
     <div class="field">
       <div class="field-text">
+        <span class="label">Play media with</span>
+        <span class="hint">Leave empty to find mpv, VLC or another player.</span>
+      </div>
+      <input
+        class="wide short"
+        value={settings.player_command}
+        spellcheck="false"
+        placeholder="Automatic"
+        aria-label="Media player command"
+        onchange={(e) => store.patchSettings({ player_command: e.currentTarget.value.trim() })}
+      />
+    </div>
+    <div class="field">
+      <div class="field-text">
         <span class="label">Add new torrents without asking</span>
         <span class="hint">
           Skips the add sheet and uses the folder, tracker packs and file types set here.
@@ -754,6 +768,8 @@
   }
 
   .wide:focus { outline: none; border-color: var(--accent); }
+
+  .wide.short { flex: none; width: 160px; }
 
   .segments {
     display: flex;

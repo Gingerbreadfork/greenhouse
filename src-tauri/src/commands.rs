@@ -12,6 +12,7 @@ use tokio::sync::watch;
 
 use crate::engine::{self, SessionSummary, TorrentDetail, TorrentRow};
 use crate::seeding::SeedLedger;
+use crate::stream::StreamServer;
 use crate::settings::{self, Paths, Settings};
 use crate::torrentsrc;
 
@@ -24,6 +25,8 @@ pub struct AppState {
     /// Metadata lookups in flight, by staged token. Locked after `staged`.
     pub resolving: Mutex<HashMap<String, Resolving>>,
     pub seeding: Mutex<SeedLedger>,
+    /// Serves files to a media player while they download.
+    pub stream: Option<StreamServer>,
     pub bound_interface: Option<String>,
     pub blocklist_active: bool,
     pub startup_warnings: Vec<String>,
@@ -274,6 +277,118 @@ pub async fn download_blocklist(state: &AppState) -> CmdResult<()> {
 pub async fn refresh_blocklist(state: tauri::State<'_, AppState>) -> CmdResult<BlocklistStatus> {
     download_blocklist(&state).await?;
     Ok(blocklist_status_of(&state))
+}
+
+// --------------------------------------------------------------- playing
+
+const PLAYERS: &[&str] = &["mpv", "vlc", "celluloid", "haruna", "smplayer", "totem"];
+
+fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|dir| dir.join(program).is_file())
+    })
+}
+
+/// The player to run, as a program and its leading arguments: the one named
+/// in the settings, otherwise the first well-known player that is installed.
+fn player_command(configured: &str, installed: impl Fn(&str) -> bool) -> Option<Vec<String>> {
+    let configured: Vec<String> = configured.split_whitespace().map(String::from).collect();
+    if !configured.is_empty() {
+        return Some(configured);
+    }
+    PLAYERS
+        .iter()
+        .find(|p| installed(p))
+        .map(|p| vec![p.to_string()])
+}
+
+#[derive(Serialize)]
+pub struct PlayResult {
+    pub player: String,
+    /// True when the file is still downloading and is being streamed.
+    pub streaming: bool,
+}
+
+/// Opens a file in a media player. A finished file is opened from disk; an
+/// unfinished one is streamed, which makes the engine fetch what is being
+/// watched first.
+#[tauri::command]
+pub async fn play_file(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    file_index: usize,
+) -> CmdResult<PlayResult> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let handle = state
+        .session
+        .get(id.into())
+        .ok_or("that torrent is no longer in the session")?;
+    let details = state.api.api_torrent_details(id.into()).map_err(err)?;
+    let files = details.files.unwrap_or_default();
+    let file = files.get(file_index).ok_or("that file is not in the torrent")?;
+
+    let finished = handle
+        .stats()
+        .file_progress
+        .get(file_index)
+        .is_some_and(|done| *done >= file.length);
+
+    let target = if finished {
+        let mut path = PathBuf::from(&details.output_folder);
+        path.extend(&file.components);
+        path.to_string_lossy().into_owned()
+    } else {
+        if !file.included {
+            let wanted: HashSet<usize> = files
+                .iter()
+                .enumerate()
+                .filter(|(index, f)| f.included || *index == file_index)
+                .map(|(index, _)| index)
+                .collect();
+            state
+                .api
+                .api_torrent_action_update_only_files(id.into(), &wanted)
+                .await
+                .map_err(err)?;
+        }
+        if handle.is_paused() {
+            state.api.api_torrent_action_start(id.into()).await.map_err(err)?;
+        }
+        let server = state.stream.as_ref().ok_or("streaming could not be started")?;
+        server.url(id, file_index, &file.name)
+    };
+
+    let configured = state.settings.read().player_command.clone();
+    let player = match player_command(&configured, on_path) {
+        Some(command) => {
+            let mut child = std::process::Command::new(&command[0])
+                .args(&command[1..])
+                .arg(&target)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|e| format!("could not start {}: {e}", command[0]))?;
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            command[0].clone()
+        }
+        None if finished => {
+            app.opener().open_path(&target, None::<&str>).map_err(err)?;
+            "your default player".to_string()
+        }
+        None => {
+            app.opener().open_url(&target, None::<&str>).map_err(err)?;
+            "your browser".to_string()
+        }
+    };
+    Ok(PlayResult {
+        player,
+        streaming: !finished,
+    })
 }
 
 // ---------------------------------------------------------------- adding
@@ -1323,6 +1438,7 @@ mod tests {
             staged: Mutex::new(HashMap::new()),
             resolving: Mutex::new(HashMap::new()),
             seeding: Mutex::new(SeedLedger::default()),
+            stream: None,
             bound_interface: None,
             blocklist_active: false,
             startup_warnings: vec![],
@@ -1448,6 +1564,123 @@ mod tests {
             assert_eq!(engine::collect_rows(&state.session).len(), 1);
             assert!(state.staged.lock().is_empty());
             assert!(pending_adds(&state).is_empty());
+        });
+    }
+
+    #[test]
+    fn the_configured_player_wins_over_installed_ones() {
+        let has_vlc = |p: &str| p == "vlc";
+        assert_eq!(player_command("", has_vlc), Some(vec!["vlc".to_string()]));
+        assert_eq!(
+            player_command("  mpv --fs ", has_vlc),
+            Some(vec!["mpv".to_string(), "--fs".to_string()])
+        );
+        assert_eq!(player_command("", |_| false), None);
+    }
+
+    /// A player can read any part of a file through the local stream server,
+    /// and nothing is served without the secret in the address.
+    #[test]
+    fn files_stream_by_byte_range() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("stream", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+
+            let content: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+            let payload = root.join("seeded");
+            std::fs::create_dir_all(&payload).unwrap();
+            std::fs::write(payload.join("film.mkv"), &content).unwrap();
+            let torrent = librqbit::create_torrent(
+                &payload,
+                librqbit::CreateTorrentOptions { name: None, trackers: vec![], piece_length: None },
+                &librqbit::spawn_utils::BlockingSpawner::new(1),
+            )
+            .await
+            .unwrap()
+            .as_bytes()
+            .unwrap();
+            let added = state
+                .session
+                .add_torrent(
+                    AddTorrent::from_bytes(torrent),
+                    Some(AddTorrentOptions {
+                        overwrite: true,
+                        output_folder: Some(payload.to_string_lossy().into_owned()),
+                        ..Default::default()
+                    }),
+                )
+                .await
+                .unwrap();
+            let id = match added {
+                AddTorrentResponse::Added(id, handle) => {
+                    handle.wait_until_initialized().await.unwrap();
+                    id
+                }
+                _ => panic!("not added"),
+            };
+
+            let server = crate::stream::start(state.api.clone()).await.unwrap();
+            let url = server.url(id, 0, "film.mkv");
+            let part = reqwest::Client::new()
+                .get(&url)
+                .header("Range", "bytes=1000-1999")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(part.status(), 206);
+            assert_eq!(part.headers()["content-range"], "bytes 1000-1999/200000");
+            assert_eq!(part.bytes().await.unwrap().as_ref(), &content[1000..2000]);
+
+            let whole = reqwest::get(&url).await.unwrap();
+            assert_eq!(whole.status(), 200);
+            assert_eq!(whole.bytes().await.unwrap().as_ref(), content.as_slice());
+
+            let port_end = url[7..].find('/').unwrap() + 7;
+            let wrong = format!("{}/not-the-token/{id}/0/film.mkv", &url[..port_end]);
+            assert_eq!(reqwest::get(&wrong).await.unwrap().status(), 404);
+        });
+    }
+
+    /// Uses the network: the start of a video that has only just been added
+    /// can be read straight away, because the engine fetches it first.
+    #[test]
+    #[ignore]
+    fn an_unfinished_file_streams_from_the_swarm() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("live-stream", true).await;
+            let state = app.state::<AppState>();
+            let magnet = "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny";
+            let added = state
+                .session
+                .add_torrent(AddTorrent::from_url(magnet), Some(AddTorrentOptions { overwrite: true, ..Default::default() }))
+                .await
+                .unwrap();
+            let AddTorrentResponse::Added(id, handle) = added else { panic!("not added") };
+            handle.wait_until_initialized().await.unwrap();
+
+            let details = state.api.api_torrent_details(id.into()).unwrap();
+            let files = details.files.unwrap();
+            let (index, video) = files.iter().enumerate().max_by_key(|(_, f)| f.length).unwrap();
+            assert!(handle.stats().file_progress[index] < video.length, "already downloaded");
+
+            let server = crate::stream::start(state.api.clone()).await.unwrap();
+            let response = reqwest::Client::new()
+                .get(server.url(id, index, &video.name))
+                .header("Range", "bytes=0-262143")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 206);
+            let body = tokio::time::timeout(Duration::from_secs(90), response.bytes())
+                .await
+                .expect("the start of the file never arrived")
+                .unwrap();
+            assert_eq!(body.len(), 262_144);
+            let _ = state.session.delete(id.into(), true).await;
         });
     }
 

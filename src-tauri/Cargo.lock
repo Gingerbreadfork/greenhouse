@@ -1862,6 +1862,7 @@ name = "greenhouse"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "bytes",
  "dirs",
  "gtk",
@@ -1879,6 +1880,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-window-state",
  "tokio",
+ "tokio-util",
  "url",
  "uuid",
 ]

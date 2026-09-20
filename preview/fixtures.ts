@@ -260,6 +260,7 @@ export const settings: Settings = {
   seed_ratio_limit: 2,
   seed_time_limit_minutes: 0,
   notify_on_done: true,
+  player_command: '',
   packs: [
     {
       id: 'starter',
@@ -309,6 +310,23 @@ export const settings: Settings = {
     }
   ]
 };
+
+const file = (index: number, name: string, length: number, done: number) => ({
+  index,
+  name,
+  components: [name],
+  length,
+  included: true,
+  progress_bytes: length * done
+});
+
+/** A film and its extras, so the play button has something to show on. */
+export const filmFiles = [
+  file(0, 'Big Buck Bunny (2008) 4K.mkv', 8.5 * GB, 0.14),
+  file(1, 'Big Buck Bunny (2008) 4K.en.srt', 0.0001 * GB, 1),
+  file(2, 'Soundtrack.flac', 0.09 * GB, 1),
+  file(3, 'poster.jpg', 0.004 * GB, 1)
+];
 
 export const detail = {
   id: 1,

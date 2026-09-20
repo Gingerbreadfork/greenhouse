@@ -118,6 +118,7 @@ export interface Settings {
   seed_ratio_limit: number;
   seed_time_limit_minutes: number;
   notify_on_done: boolean;
+  player_command: string;
   packs: TrackerPack[];
 }
 
@@ -129,6 +130,12 @@ export interface Bootstrap {
   /** The interface traffic is tied to for this run, if any. */
   bound_interface: string | null;
   warnings: string[];
+}
+
+export interface PlayResult {
+  player: string;
+  /** True when the file is still downloading and is being streamed. */
+  streaming: boolean;
 }
 
 export interface BlocklistStatus {

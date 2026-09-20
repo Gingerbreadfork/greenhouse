@@ -100,6 +100,10 @@ you see is the real one.
 filter for torrents that hold hundreds of files. Unfinished downloads can live
 in a separate folder and are moved to their real destination on completion.
 
+**Play while it downloads.** Hit play on a video or audio file and it opens in
+mpv, VLC or the player you name, before the download is done. The part being
+watched is fetched first, so you can start a film seconds after adding it.
+
 **Watching.** A per-torrent inspector with progress, peers, per-file progress
 and trackers. A live throughput graph that starts when the first byte moves,
 not when the app launches.

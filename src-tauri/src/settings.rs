@@ -73,6 +73,8 @@ pub struct Settings {
     pub seed_time_limit_minutes: u32,
 
     pub notify_on_done: bool,
+    /// Program that plays media files. Empty means find one.
+    pub player_command: String,
     pub packs: Vec<TrackerPack>,
 }
 
@@ -105,6 +107,7 @@ impl Default for Settings {
             seed_ratio_limit: 0.0,
             seed_time_limit_minutes: 0,
             notify_on_done: true,
+            player_command: String::new(),
             packs: vec![starter_pack()],
         }
     }

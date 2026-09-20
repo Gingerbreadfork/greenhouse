@@ -93,6 +93,24 @@
     setSelection(next, on ? 'All files included' : 'Only the first file kept');
   }
 
+  function playable(name: string) {
+    const kind = fileKind(name);
+    return kind === 'video' || kind === 'audio';
+  }
+
+  async function play(index: number) {
+    try {
+      const result = await api.playFile(torrent.id, index);
+      store.toast(
+        result.streaming ? `Streaming to ${result.player}` : `Opened in ${result.player}`,
+        'info',
+        result.streaming ? 'The part being played is downloaded first' : undefined
+      );
+    } catch (e) {
+      store.toast('Could not play that file', 'bad', String(e));
+    }
+  }
+
   async function toggleFile(index: number, on: boolean) {
     if (!detail) return;
     const next = detail.files
@@ -199,18 +217,30 @@
           {#each shownFiles as file (file.index)}
             {@const done = file.length > 0 ? file.progress_bytes / file.length : 0}
             <li>
-              <Check checked={file.included} onchange={(on) => toggleFile(file.index, on)}>
-                {#snippet children()}
-                  <span class="fmeta">
-                    <span class="fname" title={file.name}>
-                      <Icon name={fileKind(file.name)} size={13} />
-                      {file.components.at(-1) ?? file.name}
+              <div class="fcheck">
+                <Check checked={file.included} onchange={(on) => toggleFile(file.index, on)}>
+                  {#snippet children()}
+                    <span class="fmeta">
+                      <span class="fname" title={file.name}>
+                        <Icon name={fileKind(file.name)} size={13} />
+                        {file.components.at(-1) ?? file.name}
+                      </span>
+                      <span class="fbar"><i style:width="{done * 100}%"></i></span>
                     </span>
-                    <span class="fbar"><i style:width="{done * 100}%"></i></span>
-                  </span>
-                  <span class="fsize num">{bytes(file.length)}</span>
-                {/snippet}
-              </Check>
+                    <span class="fsize num">{bytes(file.length)}</span>
+                  {/snippet}
+                </Check>
+              </div>
+              {#if playable(file.name)}
+                <button
+                  class="fplay"
+                  title={done >= 1 ? 'Play' : 'Play while it downloads'}
+                  aria-label="Play {file.components.at(-1) ?? file.name}"
+                  onclick={() => play(file.index)}
+                >
+                  <Icon name="play" size={12} />
+                </button>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -480,9 +510,29 @@
   }
 
   .files li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     padding: 7px 0;
     border-bottom: 1px solid var(--line-soft);
   }
+
+  .fcheck { flex: 1; min-width: 0; }
+
+  .fplay {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border: 0;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--ink-dim);
+    transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+  }
+
+  .fplay:hover { background: var(--flow-wash); color: var(--flow); }
 
   .fmeta { min-width: 0; }
 

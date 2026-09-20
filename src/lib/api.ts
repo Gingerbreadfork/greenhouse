@@ -6,6 +6,7 @@ import type {
   BlocklistStatus,
   CommitResult,
   NetInterface,
+  PlayResult,
   SessionSummary,
   Settings,
   StagedInfo,
@@ -26,6 +27,9 @@ export const api = {
     invoke<void>('torrent_action', { id, action }),
   setFileSelection: (id: number, indices: number[]) =>
     invoke<void>('set_file_selection', { id, indices }),
+
+  playFile: (id: number, fileIndex: number) =>
+    invoke<PlayResult>('play_file', { id, fileIndex }),
 
   stageSource: (kind: 'text' | 'file', value: string) =>
     invoke<StagedInfo>('stage_source', { request: { kind, value } }),
