@@ -1,3 +1,4 @@
+mod activation;
 mod commands;
 mod engine;
 mod supervisor;
@@ -24,6 +25,8 @@ struct Tick {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    activation::stash_launch_token();
+
     tauri::Builder::default()
         // Registered first so a second launch hands its arguments to the
         // running window.
@@ -33,8 +36,8 @@ pub fn run() {
                 let _ = app.emit("greenhouse://open", args);
             }
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_focus();
                 let _ = window.unminimize();
+                activation::present(&window, activation::take_launch_token());
             }
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -42,6 +45,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // Only a first launch gets here, and GTK has already used its token.
+            activation::take_launch_token();
+
             let paths = Paths::resolve();
             let loaded = settings::load(&paths.settings_file());
             // Write the defaults out on first run so the file is there to edit.

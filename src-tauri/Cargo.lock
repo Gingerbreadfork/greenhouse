@@ -1864,6 +1864,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "dirs",
+ "gtk",
  "librqbit",
  "parking_lot",
  "percent-encoding",
