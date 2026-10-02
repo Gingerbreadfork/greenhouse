@@ -352,6 +352,7 @@ impl Settings {
 
 /// Bytes free to us on the volume that holds `path`, measured at the nearest
 /// folder that already exists.
+#[cfg(unix)]
 pub fn free_space(path: &Path) -> Option<u64> {
     use std::os::unix::ffi::OsStrExt;
     let existing = path.ancestors().find(|p| p.exists())?;
@@ -362,6 +363,30 @@ pub fn free_space(path: &Path) -> Option<u64> {
     }
     let stat = unsafe { stat.assume_init() };
     Some(stat.f_bavail as u64 * stat.f_frsize as u64)
+}
+
+/// Bytes free to us on the volume that holds `path`, measured at the nearest
+/// folder that already exists.
+#[cfg(windows)]
+pub fn free_space(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let existing = path.ancestors().find(|p| p.exists())?;
+    let wide: Vec<u16> = existing
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut available: u64 = 0;
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(available)
 }
 
 #[cfg(test)]

@@ -3,7 +3,6 @@
 
 use std::path::PathBuf;
 
-use gtk::prelude::GtkWindowExt;
 use tauri::{Runtime, WebviewWindow};
 
 fn token_file() -> Option<PathBuf> {
@@ -31,7 +30,10 @@ pub fn take_launch_token() -> Option<String> {
 
 /// Raises the window, with the token when there is one so the compositor
 /// allows it and ends the launch's busy cursor.
+#[cfg(target_os = "linux")]
 pub fn present<R: Runtime>(window: &WebviewWindow<R>, token: Option<String>) {
+    use gtk::prelude::GtkWindowExt;
+
     let target = window.clone();
     let _ = window.run_on_main_thread(move || {
         let Ok(gtk_window) = target.gtk_window() else {
@@ -42,4 +44,10 @@ pub fn present<R: Runtime>(window: &WebviewWindow<R>, token: Option<String>) {
             None => gtk_window.present(),
         }
     });
+}
+
+/// Raises the window. Other desktops let a window focus itself.
+#[cfg(not(target_os = "linux"))]
+pub fn present<R: Runtime>(window: &WebviewWindow<R>, _token: Option<String>) {
+    let _ = window.set_focus();
 }

@@ -43,11 +43,12 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
-      "icons/icon.png"
+      "icons/icon.png",
+      "icons/icon.ico"
     ],
     "category": "Utility",
     "shortDescription": "A torrent client",
-    "longDescription": "Greenhouse is a torrent client with bulk tracker management for Linux.",
+    "longDescription": "Greenhouse is a torrent client with bulk tracker management.",
     "linux": {
       "deb": {
         "depends": [],

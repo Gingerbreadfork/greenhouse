@@ -1,7 +1,7 @@
 //! Keeping Greenhouse running with its window closed: hiding instead of
 //! quitting, the tray icon, a quiet start, and starting at login.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::menu::{Menu, MenuItem};
@@ -51,6 +51,7 @@ pub fn hide<R: Runtime>(window: &tauri::Window<R>) {
 
 /// The tray needs one of these libraries, and asking for a tray without it
 /// would stop the app.
+#[cfg(target_os = "linux")]
 fn tray_supported() -> bool {
     ["libayatana-appindicator3.so.1", "libappindicator3.so.1"]
         .iter()
@@ -65,6 +66,12 @@ fn tray_supported() -> bool {
             unsafe { libc::dlclose(handle) };
             true
         })
+}
+
+/// Every other desktop has a notification area.
+#[cfg(not(target_os = "linux"))]
+fn tray_supported() -> bool {
+    true
 }
 
 /// Shows the tray icon while Greenhouse keeps running in the background, and
@@ -102,10 +109,6 @@ fn build_tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }
 
-fn autostart_dir() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("autostart"))
-}
-
 /// The program to start at login. An AppImage has to be started by its own
 /// path, not the one it unpacks to.
 fn own_program() -> Option<PathBuf> {
@@ -114,7 +117,13 @@ fn own_program() -> Option<PathBuf> {
         .or_else(|| std::env::current_exe().ok())
 }
 
-fn autostart_entry(program: &Path) -> String {
+#[cfg(not(windows))]
+fn autostart_dir() -> Option<PathBuf> {
+    Some(dirs::config_dir()?.join("autostart"))
+}
+
+#[cfg(not(windows))]
+fn autostart_entry(program: &std::path::Path) -> String {
     let program = program.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
     format!(
         "[Desktop Entry]\n\
@@ -128,7 +137,12 @@ fn autostart_entry(program: &Path) -> String {
     )
 }
 
-fn write_autostart(dir: &Path, program: &Path, wanted: bool) -> std::io::Result<()> {
+#[cfg(not(windows))]
+fn write_autostart(
+    dir: &std::path::Path,
+    program: &std::path::Path,
+    wanted: bool,
+) -> std::io::Result<()> {
     let file = dir.join("greenhouse.desktop");
     if !wanted {
         return match std::fs::remove_file(file) {
@@ -141,15 +155,38 @@ fn write_autostart(dir: &Path, program: &Path, wanted: bool) -> std::io::Result<
 }
 
 /// Makes the login entry match the setting.
+#[cfg(not(windows))]
 pub fn sync_autostart(wanted: bool) -> Result<(), String> {
     let dir = autostart_dir().ok_or("there is no config folder to put it in")?;
     let program = own_program().ok_or("could not work out where Greenhouse is installed")?;
     write_autostart(&dir, &program, wanted).map_err(|e| e.to_string())
 }
 
-#[cfg(test)]
+/// Makes the login entry match the setting, as a value under the user's Run key.
+#[cfg(windows)]
+pub fn sync_autostart(wanted: bool) -> Result<(), String> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let program = own_program().ok_or("could not work out where Greenhouse is installed")?;
+    let (run, _) = RegKey::predef(HKEY_CURRENT_USER)
+        .create_subkey(r"Software\Microsoft\Windows\CurrentVersion\Run")
+        .map_err(|e| e.to_string())?;
+    let result = if wanted {
+        run.set_value("Greenhouse", &format!("\"{}\" --hidden", program.display()))
+    } else {
+        match run.delete_value("Greenhouse") {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    };
+    result.map_err(|e| e.to_string())
+}
+
+#[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn the_login_entry_starts_hidden_and_can_be_removed() {

@@ -2376,7 +2376,7 @@ mod tests {
         // Custom destination, many files: recreate the sub-folder.
         assert_eq!(
             resolve_output_folder("/other", "/dl", &multi),
-            Some("/other/Some Release".to_string())
+            Some(PathBuf::from("/other").join("Some Release").to_string_lossy().into_owned())
         );
         // Custom destination, single file: no sub-folder.
         assert_eq!(
