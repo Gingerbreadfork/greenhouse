@@ -42,8 +42,8 @@
   </header>
 
   <p class="lede">
-    A torrent client for Linux that looks good and keeps everything a click or a keystroke
-    away.
+    A torrent client for Linux and Windows that looks good and keeps everything a click or a
+    keystroke away.
   </p>
 
   <section class="card">

@@ -1,7 +1,7 @@
 <div align="center">
   <img src="src-tauri/icons/128x128.png" width="76" alt="">
   <h1>Greenhouse</h1>
-  <p><strong>A torrent client for Linux that looks good<br>
+  <p><strong>A torrent client for Linux and Windows that looks good<br>
   and keeps everything a click or a keystroke away.</strong></p>
   <br>
   <br>
@@ -11,7 +11,7 @@
 Greenhouse is a native desktop app. A Rust core built on
 [librqbit](https://github.com/ikatson/rqbit) does the BitTorrent work; a
 Svelte 5 interface runs in a [Tauri](https://tauri.app) window. The result is a
-9 MB package that starts instantly and uses your system's own WebKit, not a
+9 MB package that starts instantly and uses your system's own web view, not a
 bundled browser.
 
 Progress is drawn as the row itself, a wash to the point reached with a lit
@@ -128,9 +128,9 @@ are on.
 and peers on it are refused. The list is refreshed daily and the statistics
 page counts what it turns away.
 
-**VPN kill switch.** Tie Greenhouse to one network interface and torrent
-traffic never falls back to your normal connection. If that interface is
-missing at launch, traffic is blocked rather than rerouted.
+**VPN kill switch.** On Linux, tie Greenhouse to one network interface and
+torrent traffic never falls back to your normal connection. If that interface
+is missing at launch, traffic is blocked rather than rerouted.
 
 **In the background.** Let Greenhouse keep running when you close its window,
 with a tray icon where the desktop shows one, and start it quietly at login.
@@ -176,11 +176,16 @@ reduced-motion switch that turns off every transition.
 
 ## Installing
 
-Grab a `.deb`, `.rpm` or `.AppImage` from
+Grab a `.deb`, `.rpm` or `.AppImage` for Linux, or the `-setup.exe` installer
+for Windows, from
 [Releases](https://github.com/Gingerbreadfork/greenhouse/releases), or build your
 own.
 
-To make Greenhouse the handler for magnet links:
+The Windows installer registers Greenhouse for magnet links and `.torrent`
+files. It is not code-signed, so SmartScreen warns the first time it runs;
+choose *More info*, then *Run anyway*.
+
+On Linux, to make Greenhouse the handler for magnet links:
 
 ```bash
 xdg-mime default Greenhouse.desktop x-scheme-handler/magnet
@@ -189,9 +194,9 @@ xdg-mime default Greenhouse.desktop application/x-bittorrent
 
 ### Building
 
-You need Node with pnpm, a Rust toolchain, and the Tauri v2 Linux
-dependencies: `webkit2gtk-4.1`, `gtk3` and `libsoup3`, with their development
-headers.
+You need Node with pnpm and a Rust toolchain. On Linux you also need the
+Tauri v2 dependencies: `webkit2gtk-4.1`, `gtk3` and `libsoup3`, with their
+development headers.
 
 ```bash
 pnpm install
@@ -201,6 +206,11 @@ pnpm app:build    # .deb, .rpm and .AppImage in src-tauri/target/release/bundle
 
 `app:build` also leaves a standalone binary at
 `src-tauri/target/release/greenhouse`.
+
+On Windows, `pnpm tauri build` produces an installer in
+`src-tauri/target/release/bundle/nsis`. CI builds one on every push as a
+workflow artifact, and attaches one to each GitHub release when it is
+published.
 
 <details>
 <summary>Why <code>app:build</code> rather than <code>pnpm tauri build</code></summary>
