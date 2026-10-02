@@ -297,3 +297,9 @@ Everything else, including speed and queue limits, applies immediately.
 interface, and [IBM Plex](https://www.ibm.com/plex/) the type.
 
 Screenshots show the real interface running against sample data.
+
+---
+
+## License
+
+[MIT](LICENSE).
