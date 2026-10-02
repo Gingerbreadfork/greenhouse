@@ -36,6 +36,9 @@ jobs:
       - name: Type check
         run: pnpm check
 
+      - name: Test the interface
+        run: pnpm test
+
       # The Rust build embeds the built frontend, so it has to exist first.
       - name: Build the frontend
         run: pnpm build
