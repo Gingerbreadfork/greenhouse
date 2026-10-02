@@ -54,6 +54,9 @@ jobs:
         run: cargo test --lib --locked
 
       - name: Build the bundles
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: TAURI_LINUX_AYATANA_APPINDICATOR=true pnpm app:build
 
       # The .deb is uninstallable on current Debian and Ubuntu if the bundler
@@ -101,6 +104,9 @@ jobs:
         run: cargo test --lib --locked
 
       - name: Build the installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build
 
       - uses: actions/upload-artifact@v4

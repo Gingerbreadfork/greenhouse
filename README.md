@@ -216,7 +216,12 @@ pnpm tauri build  # Windows: an installer in src-tauri/target/release/bundle/nsi
 On Linux, `app:build` also leaves a standalone binary at
 `src-tauri/target/release/greenhouse`. CI builds the Linux packages and the
 Windows installer on every push to main as workflow artifacts, and attaches
-them to each GitHub release when it is published.
+them to each GitHub release when it is published, together with the
+`latest.json` the updater reads.
+
+Packaging signs each file for the updater, so it needs the private key in
+`TAURI_SIGNING_PRIVATE_KEY` (the key itself or a path to it) and its password
+in `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. CI takes both from repository secrets.
 
 <details>
 <summary>Why <code>app:build</code> rather than <code>pnpm tauri build</code></summary>
