@@ -77,6 +77,10 @@ pub struct Settings {
     pub close_to_background: bool,
     /// Start quietly when you log in.
     pub start_on_login: bool,
+    /// Look for a newer release at launch and every few hours.
+    pub check_updates: bool,
+    /// Install a newer release as soon as it is found, then restart.
+    pub install_updates: bool,
     /// Program that plays media files. Empty means find one.
     pub player_command: String,
     pub packs: Vec<TrackerPack>,
@@ -116,6 +120,8 @@ impl Default for Settings {
             notify_on_done: true,
             close_to_background: false,
             start_on_login: false,
+            check_updates: true,
+            install_updates: false,
             player_command: String::new(),
             packs: vec![starter_pack()],
             feeds: Vec::new(),

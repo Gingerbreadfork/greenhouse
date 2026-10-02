@@ -120,6 +120,8 @@ export interface Settings {
   notify_on_done: boolean;
   close_to_background: boolean;
   start_on_login: boolean;
+  check_updates: boolean;
+  install_updates: boolean;
   player_command: string;
   packs: TrackerPack[];
   feeds: Feed[];

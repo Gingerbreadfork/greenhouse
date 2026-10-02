@@ -33,6 +33,17 @@
       "devCsp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYxOTI0MUJFMzI0NzAwQTkKUldTcEFFY3l2a0dTOFVaQ2IyWUhNQWJYT1BpV2tIT3lnVXpIazlmcG1taUM1bEE4TkYwdERMM24K",
+      "endpoints": [
+        "https://github.com/Gingerbreadfork/greenhouse/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": [
@@ -50,6 +61,7 @@
     "category": "Utility",
     "shortDescription": "A torrent client",
     "longDescription": "Greenhouse is a torrent client with bulk tracker management.",
+    "createUpdaterArtifacts": true,
     "linux": {
       "deb": {
         "depends": [],

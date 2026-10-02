@@ -187,6 +187,12 @@ The Windows installer registers Greenhouse for magnet links and `.torrent`
 files. It is not code-signed, so SmartScreen warns the first time it runs;
 choose *More info*, then *Run anyway*.
 
+Greenhouse looks for a newer release when it starts and every six hours, and
+offers to install it. Settings can make that automatic, or turn the check off.
+Every package is signed and the signature is checked before anything is
+installed; a `.deb` or `.rpm` update asks for your password, since it goes
+through the package manager.
+
 On Linux, to make Greenhouse the handler for magnet links:
 
 ```bash

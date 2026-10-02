@@ -1,5 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
 import { api } from './api';
+import { checkForUpdate, relaunch, type UpdateHandle } from './updates';
 import type {
   ActivityEntry,
   CommitResult,
@@ -49,6 +50,7 @@ const EMPTY_SESSION: SessionSummary = {
 };
 
 const HISTORY = 90;
+const UPDATE_EVERY = 6 * 60 * 60 * 1000;
 
 class Store {
   ready = $state(false);
@@ -58,6 +60,14 @@ class Store {
   defaultDir = $state('');
   /** The interface traffic is tied to for this run, if any. */
   boundInterface = $state<string | null>(null);
+
+  /** A newer release the updater found, until it is installed. */
+  update = $state<UpdateHandle | null>(null);
+  /** Download progress from 0 to 1 while an update installs. */
+  updateProgress = $state<number | null>(null);
+  updateError = $state('');
+  updateCheckedAt = $state<number | null>(null);
+  private updateTimer: ReturnType<typeof setInterval> | null = null;
 
   torrents = $state.raw<TorrentRow[]>([]);
   pending = $state.raw<PendingAdd[]>([]);
@@ -208,6 +218,60 @@ class Store {
       this.activity = [event.payload, ...this.activity];
       if (this.view !== 'activity') this.unseenActivity += 1;
     });
+    this.scheduleUpdateChecks();
+  }
+
+  /** Checks for a newer release now and every few hours, while the setting is on. */
+  scheduleUpdateChecks() {
+    if (this.updateTimer) clearInterval(this.updateTimer);
+    this.updateTimer = null;
+    if (!this.settings?.check_updates) return;
+    void this.checkForUpdate();
+    this.updateTimer = setInterval(() => void this.checkForUpdate(), UPDATE_EVERY);
+  }
+
+  /** Looks for a newer release. A check asked for by hand always reports back. */
+  async checkForUpdate(byHand = false) {
+    try {
+      const found = await checkForUpdate();
+      this.updateCheckedAt = Date.now();
+      this.updateError = '';
+      if (!found) {
+        this.update = null;
+        if (byHand) this.toast('Greenhouse is up to date', 'good');
+        return;
+      }
+      const fresh = this.update?.version !== found.version;
+      this.update = found;
+      if (this.settings?.install_updates) {
+        await this.installUpdate();
+      } else if (fresh || byHand) {
+        this.toast(`Greenhouse ${found.version} is available`, 'info', undefined, {
+          label: 'Install',
+          run: () => void this.installUpdate()
+        });
+      }
+    } catch (e) {
+      this.updateError = String(e);
+      if (byHand) this.toast('Could not check for updates', 'bad', String(e));
+    }
+  }
+
+  /** Downloads and installs the release found, then restarts. */
+  async installUpdate() {
+    const update = this.update;
+    if (!update || this.updateProgress !== null) return;
+    this.updateProgress = 0;
+    try {
+      await update.install((fraction) => (this.updateProgress = fraction));
+      this.toast(`Greenhouse ${update.version} is installed`, 'good', 'Restarting…');
+      await relaunch();
+      this.updateProgress = null;
+    } catch (e) {
+      this.updateProgress = null;
+      this.updateError = String(e);
+      this.toast('The update could not be installed', 'bad', String(e));
+    }
   }
 
   /** Restarts the engine so changed network settings take effect now. */
@@ -301,6 +365,7 @@ class Store {
     const next = { ...this.settings, ...patch };
     this.settings = await api.saveSettings(next);
     this.applyChrome();
+    if ('check_updates' in patch) this.scheduleUpdateChecks();
   }
 
   toast(

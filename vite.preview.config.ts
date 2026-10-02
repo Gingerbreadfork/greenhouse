@@ -15,7 +15,9 @@ export default defineConfig({
       '@tauri-apps/api/event': mock('event.ts'),
       '@tauri-apps/api/window': mock('window.ts'),
       '@tauri-apps/plugin-dialog': mock('dialog.ts'),
-      '@tauri-apps/plugin-opener': mock('opener.ts')
+      '@tauri-apps/plugin-opener': mock('opener.ts'),
+      '@tauri-apps/plugin-updater': mock('updater.ts'),
+      '@tauri-apps/plugin-process': mock('process.ts')
     }
   },
   build: { outDir: 'preview-dist', target: 'esnext', emptyOutDir: true },
