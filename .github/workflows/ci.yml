@@ -48,3 +48,42 @@ jobs:
       - name: Test
         working-directory: src-tauri
         run: cargo test --lib --locked
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # The Rust build embeds the built frontend, so it has to exist first.
+      - name: Build the frontend
+        run: pnpm build
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test --lib --locked
+
+      - name: Build the installer
+        run: pnpm tauri build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: greenhouse-windows
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
