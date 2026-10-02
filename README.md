@@ -160,6 +160,7 @@ app.
 | <kbd>Delete</kbd> | Remove |
 | <kbd>Esc</kbd> | Clear the selection, or close a panel |
 | <kbd>Ctrl</kbd> <kbd>O</kbd> | Choose a torrent file |
+| <kbd>Ctrl</kbd> <kbd>Q</kbd> | Quit |
 
 Double-click opens a torrent's folder. Right-click opens the full menu,
 including *Copy magnet link*.
@@ -207,9 +208,9 @@ pnpm tauri build  # Windows: an installer in src-tauri/target/release/bundle/nsi
 ```
 
 On Linux, `app:build` also leaves a standalone binary at
-`src-tauri/target/release/greenhouse`. CI builds the Windows installer on
-every push to main as a workflow artifact, and attaches one to each GitHub
-release when it is published.
+`src-tauri/target/release/greenhouse`. CI builds the Linux packages and the
+Windows installer on every push to main as workflow artifacts, and attaches
+them to each GitHub release when it is published.
 
 <details>
 <summary>Why <code>app:build</code> rather than <code>pnpm tauri build</code></summary>
@@ -246,6 +247,7 @@ the real components run against `preview/fixtures.ts`.
 
 ```bash
 pnpm check                               # Svelte and TypeScript
+pnpm test                                # the interface, against the preview mocks
 cd src-tauri && cargo test               # magnet parsing, tracker merging, file moves,
                                          # and the frontend/backend command contracts
 cd src-tauri && cargo run --example engine_check
@@ -261,17 +263,26 @@ trackers are attached, and prints live swarm stats for 30 seconds.
 src/                     Svelte 5 interface
   lib/store.svelte.ts    app state; the backend pushes a snapshot every 900ms
   lib/components/        one file per surface
+  **/*.test.ts           Vitest, run against the preview mocks
 src-tauri/src/
   engine.rs              librqbit session and the DTOs the interface reads
   commands.rs            the Tauri command surface
   supervisor.rs          queue limits, move-on-completion, notifications
   settings.rs            settings and tracker packs, stored as JSON
   torrentsrc.rs          magnet parsing and tracker-list handling
+  feeds.rs, watch.rs     feeds and the watch folder
+  stream.rs              the local server players stream unfinished files from
+  seeding.rs             seeding limits and upload totals
+  activity.rs            the activity log
+  background.rs          tray icon, running with the window closed, start at login
+  activation.rs          raising the window with the desktop's activation token
 preview/                 fixtures and API mocks for browser-based design work
+.github/workflows/       CI, and the packaging that runs on a release
 ```
 
 Settings live in `~/.config/greenhouse/settings.json`. Session state and a copy
-of each torrent's source file live in `~/.local/share/greenhouse/`.
+of each torrent's source file live in `~/.local/share/greenhouse/`. On Windows
+both live under `%APPDATA%\greenhouse`.
 
 ---
 
