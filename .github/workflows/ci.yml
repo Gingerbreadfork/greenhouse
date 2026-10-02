@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -19,7 +20,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev libssl-dev pkg-config
+            libayatana-appindicator3-dev librsvg2-dev libssl-dev pkg-config patchelf
 
       - uses: pnpm/action-setup@v4
         with:
@@ -48,6 +49,23 @@ jobs:
       - name: Test
         working-directory: src-tauri
         run: cargo test --lib --locked
+
+      - name: Build the bundles
+        run: TAURI_LINUX_AYATANA_APPINDICATOR=true pnpm app:build
+
+      # The .deb is uninstallable on current Debian and Ubuntu if the bundler
+      # picked the old appindicator library instead.
+      - name: Check the package dependencies
+        run: dpkg-deb -f src-tauri/target/release/bundle/deb/*.deb Depends | grep libayatana-appindicator3-1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: greenhouse-linux
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
 
   windows:
     runs-on: windows-latest
