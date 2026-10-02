@@ -41,10 +41,7 @@
     </div>
   </header>
 
-  <p class="lede">
-    A torrent client for Linux and Windows that looks good and keeps everything a click or a
-    keystroke away.
-  </p>
+  <p class="lede">{__APP_DESCRIPTION__}</p>
 
   <section class="card">
     <h2>Source</h2>
