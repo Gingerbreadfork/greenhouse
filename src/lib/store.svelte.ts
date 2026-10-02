@@ -54,6 +54,7 @@ class Store {
   ready = $state(false);
   version = $state('');
   homeDir = $state('');
+  platform = $state('');
   defaultDir = $state('');
   /** The interface traffic is tied to for this run, if any. */
   boundInterface = $state<string | null>(null);
@@ -179,6 +180,7 @@ class Store {
     this.settings = boot.settings;
     this.version = boot.version;
     this.homeDir = boot.home_dir;
+    this.platform = boot.platform;
     this.defaultDir = boot.default_download_dir;
     this.boundInterface = boot.bound_interface;
     this.appliedNetwork = networkKey(boot.settings);

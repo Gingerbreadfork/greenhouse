@@ -26,6 +26,7 @@ pub struct NetInterface {
 }
 
 /// The machine's network interfaces, apart from loopback.
+#[cfg(target_os = "linux")]
 pub fn list_interfaces() -> Vec<NetInterface> {
     let mut list: Vec<NetInterface> = std::fs::read_dir("/sys/class/net")
         .into_iter()
@@ -43,12 +44,43 @@ pub fn list_interfaces() -> Vec<NetInterface> {
     list
 }
 
+/// Only Linux can tie sockets to a device, so there is nothing to pick elsewhere.
+#[cfg(not(target_os = "linux"))]
+pub fn list_interfaces() -> Vec<NetInterface> {
+    Vec::new()
+}
+
+#[cfg(target_os = "linux")]
 fn interface_exists(name: &str) -> bool {
     std::path::Path::new("/sys/class/net").join(name).exists()
 }
 
+/// The device to bind to on this system, and a warning when the setting
+/// cannot be honoured.
+fn bind_device(wanted: &str) -> (Option<String>, Option<String>) {
+    #[cfg(target_os = "linux")]
+    {
+        choose_bind_device(wanted, interface_exists)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let wanted = wanted.trim();
+        if wanted.is_empty() {
+            return (None, None);
+        }
+        (
+            None,
+            Some(format!(
+                "Tying traffic to the network interface {wanted} only works on Linux, \
+                 so that setting was ignored."
+            )),
+        )
+    }
+}
+
 /// The device to bind to, and a warning when the wanted one is missing. A
 /// missing interface falls back to loopback so nothing leaves the machine.
+#[cfg(any(target_os = "linux", test))]
 fn choose_bind_device(
     wanted: &str,
     exists: impl Fn(&str) -> bool,
@@ -185,8 +217,7 @@ async fn start_session(
 }
 
 pub async fn build_session(paths: &Paths, settings: &Settings) -> Result<Engine> {
-    let (bind_device_name, bind_warning) =
-        choose_bind_device(&settings.bind_interface, interface_exists);
+    let (bind_device_name, bind_warning) = bind_device(&settings.bind_interface);
     let (session, blocklist_active, blocklist_warning) = start_session(
         settings.download_dir.clone().into(),
         blocklist_source(paths, settings),

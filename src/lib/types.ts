@@ -131,6 +131,8 @@ export interface Bootstrap {
   version: string;
   default_download_dir: string;
   home_dir: string;
+  /** "linux", "windows" or "macos". */
+  platform: string;
   /** The interface traffic is tied to for this run, if any. */
   bound_interface: string | null;
   warnings: string[];

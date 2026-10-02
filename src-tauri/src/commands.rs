@@ -144,6 +144,8 @@ pub struct Bootstrap {
     pub version: String,
     pub default_download_dir: String,
     pub home_dir: String,
+    /// The operating system, as Rust names it: "linux", "windows" or "macos".
+    pub platform: &'static str,
     pub bound_interface: Option<String>,
     pub warnings: Vec<String>,
 }
@@ -158,6 +160,7 @@ pub fn bootstrap(state: tauri::State<'_, AppState>) -> Bootstrap {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned(),
+        platform: std::env::consts::OS,
         bound_interface: state.engine.get().bound_interface.clone(),
         warnings: state.startup_warnings.clone(),
     }

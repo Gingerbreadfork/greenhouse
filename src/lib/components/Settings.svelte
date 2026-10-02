@@ -421,31 +421,33 @@
         {/each}
       </div>
     </div>
-    <div class="field">
-      <div class="field-text">
-        <span class="label">Only use this network interface</span>
-        <span class="hint">
-          {#if store.boundInterface === 'lo' && settings.bind_interface}
-            {settings.bind_interface} was missing at start, so torrent traffic is blocked.
-          {:else if store.boundInterface}
-            Tied to {store.boundInterface} right now. If it goes down, nothing is sent elsewhere.
-          {:else}
-            Pick your VPN's interface and torrents never fall back to your normal connection.
-          {/if}
-        </span>
+    {#if store.platform === 'linux'}
+      <div class="field">
+        <div class="field-text">
+          <span class="label">Only use this network interface</span>
+          <span class="hint">
+            {#if store.boundInterface === 'lo' && settings.bind_interface}
+              {settings.bind_interface} was missing at start, so torrent traffic is blocked.
+            {:else if store.boundInterface}
+              Tied to {store.boundInterface} right now. If it goes down, nothing is sent elsewhere.
+            {:else}
+              Pick your VPN's interface and torrents never fall back to your normal connection.
+            {/if}
+          </span>
+        </div>
+        <select
+          class="picker"
+          aria-label="Network interface"
+          value={settings.bind_interface}
+          onchange={(e) => store.patchSettings({ bind_interface: e.currentTarget.value })}
+        >
+          <option value="">Any</option>
+          {#each interfaceChoices as i (i.name)}
+            <option value={i.name}>{i.name}{i.up ? '' : ' (down)'}</option>
+          {/each}
+        </select>
       </div>
-      <select
-        class="picker"
-        aria-label="Network interface"
-        value={settings.bind_interface}
-        onchange={(e) => store.patchSettings({ bind_interface: e.currentTarget.value })}
-      >
-        <option value="">Any</option>
-        {#each interfaceChoices as i (i.name)}
-          <option value={i.name}>{i.name}{i.up ? '' : ' (down)'}</option>
-        {/each}
-      </select>
-    </div>
+    {/if}
     <div class="field stack">
       <div class="field-text">
         <span class="label">Block known bad peers</span>

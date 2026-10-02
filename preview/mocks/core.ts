@@ -19,6 +19,7 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
         version: '0.2.0',
         default_download_dir: '/home/you/Downloads',
         home_dir: '/home/you',
+        platform: 'linux',
         bound_interface: null,
         warnings: []
       } as T;
