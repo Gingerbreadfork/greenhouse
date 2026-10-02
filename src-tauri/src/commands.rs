@@ -468,22 +468,51 @@ pub fn add_feed_item<R: tauri::Runtime>(
 const PLAYERS: &[&str] = &["mpv", "vlc", "celluloid", "haruna", "smplayer", "totem"];
 
 fn on_path(program: &str) -> bool {
+    let mut names = vec![program.to_string()];
+    if cfg!(windows) {
+        names.push(format!("{program}.exe"));
+    }
     std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|dir| dir.join(program).is_file())
+        std::env::split_paths(&paths).any(|dir| names.iter().any(|n| dir.join(n).is_file()))
     })
+}
+
+/// How to start a well-known player: by name when it is on PATH, otherwise
+/// from its usual install folder on Windows.
+fn locate_player(program: &str) -> Option<String> {
+    if on_path(program) {
+        return Some(program.to_string());
+    }
+    #[cfg(windows)]
+    if program == "vlc" {
+        for root in ["ProgramFiles", "ProgramFiles(x86)"] {
+            let Some(root) = std::env::var_os(root) else {
+                continue;
+            };
+            let exe = PathBuf::from(root).join(r"VideoLAN\VLC\vlc.exe");
+            if exe.is_file() {
+                return Some(exe.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
 }
 
 /// The player to run, as a program and its leading arguments: the one named
 /// in the settings, otherwise the first well-known player that is installed.
-fn player_command(configured: &str, installed: impl Fn(&str) -> bool) -> Option<Vec<String>> {
-    let configured: Vec<String> = configured.split_whitespace().map(String::from).collect();
+fn player_command(
+    configured: &str,
+    locate: impl Fn(&str) -> Option<String>,
+) -> Option<Vec<String>> {
+    let configured = configured.trim();
     if !configured.is_empty() {
-        return Some(configured);
+        // A full path to a player can have spaces in it.
+        if std::path::Path::new(configured).is_file() {
+            return Some(vec![configured.to_string()]);
+        }
+        return Some(configured.split_whitespace().map(String::from).collect());
     }
-    PLAYERS
-        .iter()
-        .find(|p| installed(p))
-        .map(|p| vec![p.to_string()])
+    PLAYERS.iter().find_map(|p| locate(p)).map(|p| vec![p])
 }
 
 #[derive(Serialize)]
@@ -545,7 +574,7 @@ pub async fn play_file(
     };
 
     let configured = state.settings.read().player_command.clone();
-    let player = match player_command(&configured, on_path) {
+    let player = match player_command(&configured, locate_player) {
         Some(command) => {
             let mut child = std::process::Command::new(&command[0])
                 .args(&command[1..])
@@ -1909,13 +1938,13 @@ mod tests {
 
     #[test]
     fn the_configured_player_wins_over_installed_ones() {
-        let has_vlc = |p: &str| p == "vlc";
+        let has_vlc = |p: &str| (p == "vlc").then(|| p.to_string());
         assert_eq!(player_command("", has_vlc), Some(vec!["vlc".to_string()]));
         assert_eq!(
             player_command("  mpv --fs ", has_vlc),
             Some(vec!["mpv".to_string(), "--fs".to_string()])
         );
-        assert_eq!(player_command("", |_| false), None);
+        assert_eq!(player_command("", |_| None), None);
     }
 
     /// A player can read any part of a file through the local stream server,
