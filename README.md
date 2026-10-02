@@ -11,8 +11,8 @@
 Greenhouse is a native desktop app. A Rust core built on
 [librqbit](https://github.com/ikatson/rqbit) does the BitTorrent work; a
 Svelte 5 interface runs in a [Tauri](https://tauri.app) window. The result is a
-9 MB package that starts instantly and uses your system's own web view, not a
-bundled browser.
+package of around 9 MB on Linux that starts instantly and uses your system's own
+web view, not a bundled browser.
 
 Progress is drawn as the row itself, a wash to the point reached with a lit
 leading edge, so a list of torrents reads as one living system at a glance.
@@ -136,9 +136,10 @@ is missing at launch, traffic is blocked rather than rerouted.
 with a tray icon where the desktop shows one, and start it quietly at login.
 Opening it again from your apps brings the window back.
 
-**Desktop fit.** Registers as your system's magnet handler, with a second
-launch handing the link to the running window. Remembers its size and position.
-Desktop notification when a download finishes, with a button to test it.
+**Desktop fit.** Registers as a handler for magnet links and `.torrent` files,
+with a second launch handing the link to the running window. Remembers its size
+and position. Desktop notification when a download finishes, with a button to
+test it.
 
 ---
 
@@ -195,22 +196,20 @@ xdg-mime default Greenhouse.desktop application/x-bittorrent
 ### Building
 
 You need Node with pnpm and a Rust toolchain. On Linux you also need the
-Tauri v2 dependencies: `webkit2gtk-4.1`, `gtk3` and `libsoup3`, with their
-development headers.
+Tauri v2 dependencies with their development headers: `webkit2gtk-4.1`,
+`gtk3`, `libsoup3`, `libayatana-appindicator3`, `librsvg2` and `openssl`.
 
 ```bash
 pnpm install
 pnpm app          # run it in development
-pnpm app:build    # .deb, .rpm and .AppImage in src-tauri/target/release/bundle
+pnpm app:build    # Linux: .deb, .rpm and .AppImage in src-tauri/target/release/bundle
+pnpm tauri build  # Windows: an installer in src-tauri/target/release/bundle/nsis
 ```
 
-`app:build` also leaves a standalone binary at
-`src-tauri/target/release/greenhouse`.
-
-On Windows, `pnpm tauri build` produces an installer in
-`src-tauri/target/release/bundle/nsis`. CI builds one on every push as a
-workflow artifact, and attaches one to each GitHub release when it is
-published.
+On Linux, `app:build` also leaves a standalone binary at
+`src-tauri/target/release/greenhouse`. CI builds the Windows installer on
+every push to main as a workflow artifact, and attaches one to each GitHub
+release when it is published.
 
 <details>
 <summary>Why <code>app:build</code> rather than <code>pnpm tauri build</code></summary>
