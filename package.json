@@ -1,6 +1,6 @@
 {
   "name": "greenhouse",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A torrent client for Linux and Windows that looks good and keeps everything a click or a keystroke away.",
   "repository": {
     "type": "git",

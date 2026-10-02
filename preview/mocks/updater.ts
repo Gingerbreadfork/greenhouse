@@ -14,7 +14,7 @@ export async function check() {
   const version = available;
   return {
     version,
-    currentVersion: '0.3.0',
+    currentVersion: '0.3.1',
     body: 'Greenhouse now does something new.\n\n## New\n\n- A thing.',
     date: '2026-10-03T00:00:00Z',
     rawJson: {},
