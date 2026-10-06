@@ -9,7 +9,7 @@ describe('store', () => {
   it('takes the app facts from the bootstrap payload', () => {
     expect(store.ready).toBe(true);
     expect(store.platform).toBe('linux');
-    expect(store.version).toBe('0.3.1');
+    expect(store.version).toBe('0.3.2');
     expect(store.homeDir).toBe('/home/you');
     expect(store.settings?.download_dir).toBe('/home/you/Downloads');
     expect(store.torrents.length).toBeGreaterThan(0);

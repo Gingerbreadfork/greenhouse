@@ -16,7 +16,7 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
     case 'bootstrap':
       return {
         settings: state.settings,
-        version: '0.3.1',
+        version: '0.3.2',
         default_download_dir: '/home/you/Downloads',
         home_dir: '/home/you',
         platform: 'linux',

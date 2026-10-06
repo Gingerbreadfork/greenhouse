@@ -1,6 +1,6 @@
 [package]
 name = "greenhouse"
-version = "0.3.1"
+version = "0.3.2"
 description = "A torrent client with bulk tracker management"
 edition = "2021"
 rust-version = "1.82"
