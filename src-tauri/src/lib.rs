@@ -30,6 +30,7 @@ struct Tick {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    raise_open_file_limit();
     activation::stash_launch_token();
 
     tauri::Builder::default()
@@ -230,4 +231,34 @@ fn forward_launch_arguments(app: tauri::AppHandle) {
         tokio::time::sleep(Duration::from_millis(600)).await;
         let _ = app.emit("greenhouse://open", args);
     });
+}
+
+/// Raises the open-file soft limit to the hard limit, for peer connections.
+#[cfg(unix)]
+fn raise_open_file_limit() {
+    let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    unsafe {
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) == 0 && limit.rlim_cur < limit.rlim_max {
+            limit.rlim_cur = limit.rlim_max;
+            libc::setrlimit(libc::RLIMIT_NOFILE, &limit);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn raise_open_file_limit() {}
+
+#[cfg(all(test, unix))]
+mod tests {
+    #[test]
+    fn open_file_limit_is_raised_to_the_hard_limit() {
+        let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) }, 0);
+        let lowered = libc::rlimit { rlim_cur: limit.rlim_max.min(1024), rlim_max: limit.rlim_max };
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &lowered) }, 0);
+
+        super::raise_open_file_limit();
+        assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) }, 0);
+        assert_eq!(limit.rlim_cur, limit.rlim_max);
+    }
 }
