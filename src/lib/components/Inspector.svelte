@@ -292,6 +292,18 @@
     animation: slide 200ms var(--ease);
   }
 
+  /* Too narrow to share the row, so it floats over the list's right side. */
+  @media (max-width: 1180px) {
+    .inspector {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 20;
+      box-shadow: var(--shadow-side);
+    }
+  }
+
   header {
     display: flex;
     align-items: flex-start;
