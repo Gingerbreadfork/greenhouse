@@ -16,6 +16,18 @@ pub fn raise() {
     }
 }
 
+/// The open-file soft limit in force, where the system has one.
+pub fn current() -> Option<u64> {
+    #[cfg(unix)]
+    {
+        rlimit::getrlimit(rlimit::Resource::NOFILE).ok().map(|(soft, _)| soft)
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
 /// Makes a program start with the open-file limits Greenhouse started with.
 #[cfg(unix)]
 pub fn restore(command: &mut std::process::Command) {

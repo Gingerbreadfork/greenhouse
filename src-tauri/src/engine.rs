@@ -148,6 +148,16 @@ impl EngineSlot {
     }
 }
 
+/// Peers per torrent: the setting when there is one, otherwise the engine's
+/// default, lowered to one per 128 open files the system allows (at least 16).
+fn peer_limit(setting: u32, open_files: Option<u64>) -> Option<usize> {
+    if setting > 0 {
+        return Some(setting as usize);
+    }
+    let affordable = (open_files? / 128).max(16) as usize;
+    (affordable < 128).then_some(affordable)
+}
+
 fn session_options(
     paths: &Paths,
     settings: &Settings,
@@ -170,8 +180,7 @@ fn session_options(
         }),
         bind_device_name,
         blocklist_url,
-        peer_limit: (settings.peer_limit_per_torrent > 0)
-            .then_some(settings.peer_limit_per_torrent as usize),
+        peer_limit: peer_limit(settings.peer_limit_per_torrent, crate::fdlimit::current()),
         listen: Some(ListenerOptions {
             mode: listener_mode(&settings.transport),
             listen_addr,
@@ -567,6 +576,16 @@ mod tests {
 
         settings.blocklist_url.clear();
         assert_eq!(blocklist_source(&paths, &settings), None);
+    }
+
+    #[test]
+    fn automatic_peers_shrink_only_when_open_files_are_scarce() {
+        assert_eq!(peer_limit(40, Some(1024)), Some(40));
+        assert_eq!(peer_limit(0, None), None);
+        assert_eq!(peer_limit(0, Some(1_048_576)), None);
+        assert_eq!(peer_limit(0, Some(16_384)), None);
+        assert_eq!(peer_limit(0, Some(4096)), Some(32));
+        assert_eq!(peer_limit(0, Some(1024)), Some(16));
     }
 
     #[test]
