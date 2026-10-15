@@ -415,7 +415,7 @@
 <div
   class="toast-anchor"
   style:--rail={store.view === 'torrents' && store.inspectorOpen && store.selected
-    ? '372px'
+    ? 'var(--inspector-w)'
     : '0px'}
 >
   <Toasts />

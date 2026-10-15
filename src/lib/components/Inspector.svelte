@@ -283,7 +283,7 @@
 
 <style>
   .inspector {
-    width: 372px;
+    width: var(--inspector-w);
     flex: none;
     display: flex;
     flex-direction: column;
