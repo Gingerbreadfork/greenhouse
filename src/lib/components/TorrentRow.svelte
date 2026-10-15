@@ -377,4 +377,12 @@
   :global(:root[data-density='compact']) .name { font-size: 12.5px; }
   :global(:root[data-density='compact']) .meta { font-size: 11px; margin-top: 0; }
   :global(:root[data-density='compact']) .mark { width: 22px; height: 22px; }
+
+  /* A list too narrow for every column keeps the names. */
+  @container list (max-width: 592px) {
+    .row { grid-template-columns: minmax(0, 1fr); }
+
+    .numbers,
+    .actions { display: none; }
+  }
 </style>

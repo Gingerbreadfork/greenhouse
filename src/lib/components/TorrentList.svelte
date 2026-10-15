@@ -252,13 +252,17 @@
     <div class="bulk" role="toolbar" aria-label="Actions for the selected torrents">
       <span class="bulk-count num">{count} selected</span>
       <div class="bulk-actions">
-        <button onclick={() => onbulk('start')}><Icon name="play" size={13} /> Resume</button>
-        <button onclick={() => onbulk('pause')}><Icon name="pause" size={13} /> Pause</button>
-        <button class="feature" onclick={onbulktrackers}>
-          <Icon name="link" size={13} /> Add trackers
+        <button title="Resume" onclick={() => onbulk('start')}>
+          <Icon name="play" size={13} /> <span class="label">Resume</span>
         </button>
-        <button class="danger" onclick={() => onbulk('remove')}>
-          <Icon name="trash" size={13} /> Remove
+        <button title="Pause" onclick={() => onbulk('pause')}>
+          <Icon name="pause" size={13} /> <span class="label">Pause</span>
+        </button>
+        <button class="feature" title="Add trackers" onclick={onbulktrackers}>
+          <Icon name="link" size={13} /> <span class="label">Add trackers</span>
+        </button>
+        <button class="danger" title="Remove" onclick={() => onbulk('remove')}>
+          <Icon name="trash" size={13} /> <span class="label">Remove</span>
         </button>
       </div>
       <button class="clear" onclick={() => store.clearSelection()}>Clear</button>
@@ -268,6 +272,7 @@
 
 <style>
   .list {
+    container: list / inline-size;
     flex: 1;
     min-width: 0;
     display: flex;
@@ -529,6 +534,25 @@
   }
 
   .clear:hover { color: var(--ink); text-decoration: underline; }
+
+  /* Icons only when the list is too narrow for the labels. */
+  @container list (max-width: 592px) {
+    .bulk-actions button {
+      position: relative;
+      width: 28px;
+      padding: 0;
+      justify-content: center;
+    }
+
+    .bulk-actions .label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
 
   @keyframes settle {
     to { opacity: 1; }

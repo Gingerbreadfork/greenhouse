@@ -124,4 +124,11 @@
   }
 
   :global(:root[data-density='compact']) .row { height: 46px; }
+
+  /* A list too narrow for every column keeps the name and the cancel button. */
+  @container list (max-width: 592px) {
+    .row { grid-template-columns: minmax(0, 1fr) auto; }
+
+    .waited { display: none; }
+  }
 </style>
