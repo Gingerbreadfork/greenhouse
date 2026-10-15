@@ -44,6 +44,7 @@ gtk = "0.18"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+rlimit = "0.11"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

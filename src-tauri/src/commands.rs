@@ -576,12 +576,16 @@ pub async fn play_file(
     let configured = state.settings.read().player_command.clone();
     let player = match player_command(&configured, locate_player) {
         Some(command) => {
-            let mut child = std::process::Command::new(&command[0])
+            let mut launch = std::process::Command::new(&command[0]);
+            launch
                 .args(&command[1..])
                 .arg(&target)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            #[cfg(unix)]
+            crate::fdlimit::restore(&mut launch);
+            let mut child = launch
                 .spawn()
                 .map_err(|e| format!("could not start {}: {e}", command[0]))?;
             std::thread::spawn(move || {
