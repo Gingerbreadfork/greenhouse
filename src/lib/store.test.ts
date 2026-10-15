@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import pkg from '../../package.json';
 import { store } from './store.svelte';
 import { restarts } from '../../preview/mocks/process';
 import { installed, offer } from '../../preview/mocks/updater';
@@ -9,7 +10,7 @@ describe('store', () => {
   it('takes the app facts from the bootstrap payload', () => {
     expect(store.ready).toBe(true);
     expect(store.platform).toBe('linux');
-    expect(store.version).toBe('0.3.2');
+    expect(store.version).toBe(pkg.version);
     expect(store.homeDir).toBe('/home/you');
     expect(store.settings?.download_dir).toBe('/home/you/Downloads');
     expect(store.torrents.length).toBeGreaterThan(0);

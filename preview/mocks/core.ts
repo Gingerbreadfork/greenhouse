@@ -1,3 +1,4 @@
+import pkg from '../../package.json';
 import { activity, detail, feedStatus, filmFiles, session, settings, torrents } from '../fixtures';
 
 const empty = typeof location !== 'undefined' && location.search.includes('empty');
@@ -16,7 +17,7 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
     case 'bootstrap':
       return {
         settings: state.settings,
-        version: '0.3.2',
+        version: pkg.version,
         default_download_dir: '/home/you/Downloads',
         home_dir: '/home/you',
         platform: 'linux',
