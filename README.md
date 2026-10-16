@@ -161,6 +161,7 @@ app.
 | <kbd>Delete</kbd> | Remove |
 | <kbd>Esc</kbd> | Clear the selection, or close a panel |
 | <kbd>Ctrl</kbd> <kbd>O</kbd> | Choose a torrent file |
+| <kbd>Ctrl</kbd> <kbd>V</kbd> | Paste a magnet link into the search bar |
 | <kbd>Ctrl</kbd> <kbd>Q</kbd> | Quit |
 
 Double-click opens a torrent's folder. Right-click opens the full menu,
