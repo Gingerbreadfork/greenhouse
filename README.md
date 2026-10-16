@@ -287,6 +287,7 @@ src-tauri/src/
   activity.rs            the activity log
   background.rs          tray icon, running with the window closed, start at login
   activation.rs          raising the window with the desktop's activation token
+  fdlimit.rs             the open file limit, raised at startup
 preview/                 fixtures and API mocks for browser-based design work
 .github/workflows/       CI, and the packaging that runs on a release
 ```
