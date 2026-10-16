@@ -121,8 +121,9 @@ not when the app launches.
 
 **Network.** Port, UPnP, transport and per-torrent peer limits. Speed limits
 that apply the moment you set them; the rest apply with one button, which
-restarts the engine in place without relaunching. DHT and local peer discovery
-are on.
+restarts the engine in place without relaunching. With no peer limit set, each
+torrent uses fewer peers when the system allows only a few open files. DHT and
+local peer discovery are on.
 
 **Blocklist.** Point Greenhouse at a P2P-format blocklist, plain or gzipped,
 and peers on it are refused. The list is refreshed daily and the statistics
