@@ -306,10 +306,6 @@ uTP, which is a real connection-level choice, but it is not encryption. If your
 ISP or tracker requires encrypted peer connections, Greenhouse is not the right
 client for you yet.
 
-Settings under **Network** (port, UPnP, transport, peer limit) are fixed when
-the torrent session starts, so they take effect next launch. The page says so.
-Everything else, including speed and queue limits, applies immediately.
-
 ---
 
 ## Credits
