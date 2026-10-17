@@ -12,7 +12,7 @@ mod stream;
 mod torrentsrc;
 mod watch;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -98,6 +98,7 @@ pub fn run() {
                 resolving: Mutex::new(HashMap::new()),
                 seeding: Mutex::new(seeding),
                 feeds: Mutex::new(feeds),
+                queue_paused: Mutex::new(HashSet::new()),
                 activity: Mutex::new(activity),
                 stream,
                 startup_warnings,
@@ -136,6 +137,8 @@ pub fn run() {
             commands::set_file_selection,
             commands::play_file,
             commands::open_folder,
+            commands::pause_all,
+            commands::resume_all,
             commands::activity_list,
             commands::clear_activity,
             commands::feeds_status,
@@ -181,6 +184,11 @@ fn spawn_ticker(app: tauri::AppHandle) {
             let session = state.session();
             let torrents = engine::collect_rows(&session);
             supervisor.tick(&app, &state, &torrents).await;
+
+            let (down, up) = torrents
+                .iter()
+                .fold((0, 0), |(d, u), t| (d + t.download_speed, u + t.upload_speed));
+            background::show_speeds(&app, down, up);
 
             // A hidden window has nothing to draw.
             let visible = app

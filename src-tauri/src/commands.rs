@@ -30,6 +30,8 @@ pub struct AppState {
     pub resolving: Mutex<HashMap<String, Resolving>>,
     pub seeding: Mutex<SeedLedger>,
     pub feeds: Mutex<FeedsState>,
+    /// Torrents the queue paused, so ones you paused yourself are left alone.
+    pub queue_paused: Mutex<HashSet<String>>,
     pub activity: Mutex<ActivityLog>,
     /// Serves files to a media player while they download.
     pub stream: Option<StreamServer>,
@@ -245,7 +247,57 @@ pub async fn torrent_action(
         "delete" => state.api().api_torrent_action_delete(id.into()).await.map(|_| ()),
         other => return Err(format!("unknown action: {other}")),
     }
-    .map_err(err)
+    .map_err(err)?;
+    if action == "pause" {
+        if let Some(handle) = state.session().get(id.into()) {
+            state
+                .queue_paused
+                .lock()
+                .remove(&handle.info_hash().as_string());
+        }
+    }
+    Ok(())
+}
+
+/// Pauses every running torrent, as if you had paused each one yourself.
+pub async fn pause_all_inner(state: &AppState) -> usize {
+    let rows = engine::collect_rows(&state.session());
+    let mut paused = 0;
+    for row in rows
+        .iter()
+        .filter(|r| matches!(r.state.as_str(), "downloading" | "seeding" | "checking"))
+    {
+        if state.api().api_torrent_action_pause(row.id.into()).await.is_ok() {
+            paused += 1;
+        }
+    }
+    state.queue_paused.lock().clear();
+    paused
+}
+
+/// Starts every paused torrent. The queue takes over again from there.
+pub async fn resume_all_inner(state: &AppState) -> usize {
+    let rows = engine::collect_rows(&state.session());
+    let mut started = 0;
+    for row in rows
+        .iter()
+        .filter(|r| matches!(r.state.as_str(), "paused" | "complete"))
+    {
+        if state.api().api_torrent_action_start(row.id.into()).await.is_ok() {
+            started += 1;
+        }
+    }
+    started
+}
+
+#[tauri::command]
+pub async fn pause_all(state: tauri::State<'_, AppState>) -> CmdResult<usize> {
+    Ok(pause_all_inner(&state).await)
+}
+
+#[tauri::command]
+pub async fn resume_all(state: tauri::State<'_, AppState>) -> CmdResult<usize> {
+    Ok(resume_all_inner(&state).await)
 }
 
 #[tauri::command]
@@ -1820,6 +1872,7 @@ mod tests {
             resolving: Mutex::new(HashMap::new()),
             seeding: Mutex::new(SeedLedger::default()),
             feeds: Mutex::new(FeedsState::default()),
+            queue_paused: Mutex::new(HashSet::new()),
             activity: Mutex::new(ActivityLog::load(root.join("activity.json"))),
             stream: None,
             startup_warnings: vec![],

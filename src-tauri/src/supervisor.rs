@@ -15,8 +15,6 @@ use crate::settings;
 /// telling you when something is done.
 #[derive(Default)]
 pub struct Supervisor {
-    /// Torrents this queue paused, so user-paused ones are left alone.
-    queued: HashSet<String>,
     /// Torrents already reported as finished.
     announced: HashSet<String>,
     /// Torrents currently being moved, so a slow move is not started twice.
@@ -200,14 +198,14 @@ impl Supervisor {
         if max_down > 0 {
             let candidates: Vec<&TorrentRow> = rows
                 .iter()
-                .filter(|r| !r.finished && r.state != "error" && self.is_candidate(r))
+                .filter(|r| !r.finished && r.state != "error" && self.is_candidate(state, r))
                 .collect();
             self.apply_limit(state, &candidates, max_down as usize).await;
         }
         if max_seed > 0 {
             let candidates: Vec<&TorrentRow> = rows
                 .iter()
-                .filter(|r| r.finished && r.state != "error" && self.is_candidate(r))
+                .filter(|r| r.finished && r.state != "error" && self.is_candidate(state, r))
                 .collect();
             self.apply_limit(state, &candidates, max_seed as usize).await;
         }
@@ -215,10 +213,10 @@ impl Supervisor {
 
     /// A torrent belongs to the queue if it is running, or if the queue is the
     /// reason it is stopped. Anything you paused yourself is left alone.
-    fn is_candidate(&self, row: &TorrentRow) -> bool {
+    fn is_candidate(&self, state: &AppState, row: &TorrentRow) -> bool {
         match row.state.as_str() {
             "downloading" | "checking" | "seeding" => true,
-            _ => self.queued.contains(&row.info_hash),
+            _ => state.queue_paused.lock().contains(&row.info_hash),
         }
     }
 
@@ -231,13 +229,14 @@ impl Supervisor {
             let should_run = index < limit;
             let is_stopped = row.state == "paused" || row.state == "complete";
 
-            if should_run && is_stopped && self.queued.contains(&row.info_hash) {
+            let held = state.queue_paused.lock().contains(&row.info_hash);
+            if should_run && is_stopped && held {
                 if state.api().api_torrent_action_start(row.id.into()).await.is_ok() {
-                    self.queued.remove(&row.info_hash);
+                    state.queue_paused.lock().remove(&row.info_hash);
                 }
             } else if !should_run && !is_stopped {
                 if state.api().api_torrent_action_pause(row.id.into()).await.is_ok() {
-                    self.queued.insert(row.info_hash.clone());
+                    state.queue_paused.lock().insert(row.info_hash.clone());
                 }
             }
         }

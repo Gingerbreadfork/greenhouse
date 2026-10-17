@@ -4,15 +4,22 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tauri::menu::{Menu, MenuItem};
+use parking_lot::Mutex;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, Runtime};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::activation;
-use crate::commands::AppState;
+use crate::commands::{self, AppState};
 
 const TRAY_ID: &str = "main";
+
+/// The part of the tray menu that changes, kept so each tick can update it.
+struct TrayMenu<R: Runtime> {
+    speeds: Mutex<Option<MenuItem<R>>>,
+    shown: Mutex<String>,
+}
 
 /// Whether this launch asked to start without showing the window.
 pub fn launched_hidden() -> bool {
@@ -81,6 +88,10 @@ pub fn sync_tray<R: Runtime>(app: &tauri::AppHandle<R>, wanted: bool) {
     if !wanted {
         if present {
             let _ = app.remove_tray_by_id(TRAY_ID);
+            if let Some(menu) = app.try_state::<TrayMenu<R>>() {
+                *menu.speeds.lock() = None;
+                menu.shown.lock().clear();
+            }
         }
         return;
     }
@@ -92,13 +103,29 @@ pub fn sync_tray<R: Runtime>(app: &tauri::AppHandle<R>, wanted: bool) {
 
 fn build_tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show", "Show Greenhouse", true, None::<&str>)?;
+    let speeds = MenuItem::with_id(app, "speeds", "Idle", false, None::<&str>)?;
+    let pause_item = MenuItem::with_id(app, "pause_all", "Pause all", true, None::<&str>)?;
+    let resume_item = MenuItem::with_id(app, "resume_all", "Resume all", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &show_item,
+            &PredefinedMenuItem::separator(app)?,
+            &speeds,
+            &pause_item,
+            &resume_item,
+            &PredefinedMenuItem::separator(app)?,
+            &quit_item,
+        ],
+    )?;
     let mut tray = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("Greenhouse")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show(app, None),
+            "pause_all" => run_on_all(app, true),
+            "resume_all" => run_on_all(app, false),
             "quit" => app.exit(0),
             _ => {}
         });
@@ -106,7 +133,78 @@ fn build_tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
         tray = tray.icon(icon.clone());
     }
     tray.build(app)?;
+
+    match app.try_state::<TrayMenu<R>>() {
+        Some(menu) => {
+            *menu.speeds.lock() = Some(speeds);
+            menu.shown.lock().clear();
+        }
+        None => {
+            app.manage(TrayMenu::<R> {
+                speeds: Mutex::new(Some(speeds)),
+                shown: Mutex::new(String::new()),
+            });
+        }
+    }
     Ok(())
+}
+
+fn run_on_all<R: Runtime>(app: &tauri::AppHandle<R>, pause: bool) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        if pause {
+            commands::pause_all_inner(&state).await;
+        } else {
+            commands::resume_all_inner(&state).await;
+        }
+    });
+}
+
+/// Puts the current speeds in the tray menu and tooltip, while there is a tray.
+pub fn show_speeds<R: Runtime>(app: &tauri::AppHandle<R>, down: u64, up: u64) {
+    let Some(menu) = app.try_state::<TrayMenu<R>>() else {
+        return;
+    };
+    let text = speeds_text(down, up);
+    {
+        let mut shown = menu.shown.lock();
+        if *shown == text {
+            return;
+        }
+        *shown = text.clone();
+    }
+    if let Some(item) = menu.speeds.lock().as_ref() {
+        let _ = item.set_text(&text);
+    }
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let tip = if down == 0 && up == 0 {
+            "Greenhouse".to_string()
+        } else {
+            format!("Greenhouse · {text}")
+        };
+        let _ = tray.set_tooltip(Some(tip));
+    }
+}
+
+fn speeds_text(down: u64, up: u64) -> String {
+    if down == 0 && up == 0 {
+        return "Idle".into();
+    }
+    format!("↓ {}   ↑ {}", rate(down), rate(up))
+}
+
+/// Bytes per second, in the units the window uses.
+fn rate(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "kB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    let digits = if unit == 0 || value >= 100.0 { 0 } else { 1 };
+    format!("{value:.digits$} {}/s", UNITS[unit])
 }
 
 /// The program to start at login. An AppImage has to be started by its own
@@ -181,6 +279,22 @@ pub fn sync_autostart(wanted: bool) -> Result<(), String> {
         }
     };
     result.map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::*;
+
+    #[test]
+    fn the_tray_shows_speeds_the_way_the_window_does() {
+        assert_eq!(speeds_text(0, 0), "Idle");
+        assert_eq!(rate(0), "0 B/s");
+        assert_eq!(rate(900), "900 B/s");
+        assert_eq!(rate(12_800), "12.5 kB/s");
+        assert_eq!(rate(8_808_038), "8.4 MB/s");
+        assert_eq!(rate(150 * 1024 * 1024), "150 MB/s");
+        assert_eq!(speeds_text(1024, 0), "↓ 1.0 kB/s   ↑ 0 B/s");
+    }
 }
 
 #[cfg(all(test, not(windows)))]

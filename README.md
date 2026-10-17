@@ -142,6 +142,7 @@ is missing at launch, traffic is blocked rather than rerouted.
 
 **In the background.** Let Greenhouse keep running when you close its window,
 with a tray icon where the desktop shows one, and start it quietly at login.
+The tray menu shows the current speeds and can pause or resume everything.
 Opening it again from your apps brings the window back.
 
 **Desktop fit.** Registers as a handler for magnet links and `.torrent` files,

@@ -103,6 +103,9 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
       return { changed: live.length, skipped_private: 0 } as T;
     case 'apply_trackers_many':
       return { changed: args?.ids?.length ?? 0, skipped_private: 0 } as T;
+    case 'pause_all':
+    case 'resume_all':
+      return live.length as T;
     case 'magnet_link':
       return `magnet:?xt=urn:btih:${'0'.repeat(40)}&dn=preview` as T;
     case 'forget_torrent': {
