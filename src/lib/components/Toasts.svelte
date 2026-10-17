@@ -39,7 +39,8 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    width: 330px;
+    width: min(330px, calc(100vw - 32px - var(--rail, 0px)));
+    min-width: 220px;
     pointer-events: none;
   }
 
@@ -65,6 +66,16 @@
     margin: 0;
     font-size: 12.5px;
     line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  p:first-child,
+  .detail {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    overflow: hidden;
   }
 
   .detail {
@@ -72,8 +83,6 @@
     font-size: 11px;
     color: var(--ink-faint);
     line-height: 1.45;
-    max-height: 4.4em;
-    overflow: hidden;
   }
 
   .undo {
