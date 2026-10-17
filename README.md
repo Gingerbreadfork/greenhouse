@@ -81,9 +81,12 @@ are remembered when you quit and carry on looking at the next launch.
 with your defaults, then renamed so it is not picked up twice.
 
 **Feeds.** Follow an RSS or Atom feed and new releases are added as they are
-published, filtered by words a title must or must not contain, each feed into
-its own folder if you like. A feed's existing backlog is never downloaded on
-its own; add any listed item by hand.
+published, filtered by words a title must or must not contain, or by a regular
+expression, each feed into its own folder if you like. *One copy of each
+episode* reads the season and episode from titles such as `S01E02`, `1x02` or
+`Show - 02` and skips later releases of the same one from other groups. A
+feed's existing backlog is never downloaded on its own; add any listed item by
+hand.
 
 **Add without asking.** Turn on *Add new torrents without asking* in Settings
 and magnets and `.torrent` files are added straight away with your saved

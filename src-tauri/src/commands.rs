@@ -194,6 +194,7 @@ pub fn save_settings(
     state: tauri::State<'_, AppState>,
     next: Settings,
 ) -> CmdResult<Settings> {
+    feeds::validate(&next.feeds)?;
     if next.start_on_login != state.settings.read().start_on_login {
         background::sync_autostart(next.start_on_login)
             .map_err(|e| format!("could not change the login entry: {e}"))?;

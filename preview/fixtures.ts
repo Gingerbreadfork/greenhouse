@@ -283,6 +283,9 @@ export const settings: Settings = {
       enabled: true,
       must_contain: '',
       must_not_contain: '',
+      must_match: '',
+      must_not_match: '',
+      episode_filter: false,
       download_dir: ''
     },
     {
@@ -292,6 +295,9 @@ export const settings: Settings = {
       enabled: false,
       must_contain: '2160p, hevc',
       must_not_contain: 'cam',
+      must_match: '',
+      must_not_match: '\\b(ts|hdcam)\\b',
+      episode_filter: true,
       download_dir: '/home/you/Films'
     }
   ],

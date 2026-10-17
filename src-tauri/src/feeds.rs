@@ -2,8 +2,10 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, Runtime};
 
@@ -25,6 +27,12 @@ pub struct Feed {
     pub must_contain: String,
     /// Comma-separated words that rule a title out.
     pub must_not_contain: String,
+    /// A regular expression a title must match. Empty matches anything.
+    pub must_match: String,
+    /// A regular expression that rules a title out.
+    pub must_not_match: String,
+    /// Take the first copy of each episode and skip the rest.
+    pub episode_filter: bool,
     /// Where this feed's torrents are saved. Empty means the usual folder.
     pub download_dir: String,
 }
@@ -107,11 +115,104 @@ fn terms(list: &str) -> Vec<String> {
         .collect()
 }
 
-/// Whether a title passes a feed's filters.
+fn pattern(source: &str, what: &str) -> Result<Option<Regex>, String> {
+    let source = source.trim();
+    if source.is_empty() {
+        return Ok(None);
+    }
+    RegexBuilder::new(source)
+        .case_insensitive(true)
+        .size_limit(1 << 20)
+        .build()
+        .map(Some)
+        .map_err(|e| format!("the \"{what}\" pattern is not a valid regular expression: {e}"))
+}
+
+/// A feed's filters, compiled once per check.
+pub struct Filters {
+    must: Vec<String>,
+    must_not: Vec<String>,
+    pattern: Option<Regex>,
+    exclude: Option<Regex>,
+}
+
+impl Filters {
+    pub fn compile(feed: &Feed) -> Result<Self, String> {
+        Ok(Self {
+            must: terms(&feed.must_contain),
+            must_not: terms(&feed.must_not_contain),
+            pattern: pattern(&feed.must_match, "must match")?,
+            exclude: pattern(&feed.must_not_match, "must not match")?,
+        })
+    }
+
+    pub fn matches(&self, title: &str) -> bool {
+        let lower = title.to_lowercase();
+        self.must.iter().all(|t| lower.contains(t))
+            && !self.must_not.iter().any(|t| lower.contains(t))
+            && self.pattern.as_ref().is_none_or(|p| p.is_match(title))
+            && !self.exclude.as_ref().is_some_and(|p| p.is_match(title))
+    }
+}
+
+/// Whether a title passes a feed's filters. A broken pattern matches nothing.
+#[cfg(test)]
 pub fn matches(feed: &Feed, title: &str) -> bool {
-    let title = title.to_lowercase();
-    terms(&feed.must_contain).iter().all(|t| title.contains(t))
-        && !terms(&feed.must_not_contain).iter().any(|t| title.contains(t))
+    Filters::compile(feed).is_ok_and(|f| f.matches(title))
+}
+
+/// Checks every feed's patterns, naming the first feed with a broken one.
+pub fn validate(feeds: &[Feed]) -> Result<(), String> {
+    for feed in feeds {
+        Filters::compile(feed).map_err(|e| format!("{}: {e}", feed.name))?;
+    }
+    Ok(())
+}
+
+/// The show and episode a release title names, so copies of one episode from
+/// different groups come out equal: "Show.S01E02.1080p-A" and "show s1e2
+/// 720p B" both give "show|1x2". Titles that name no episode give None.
+pub fn episode_key(title: &str) -> Option<String> {
+    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    let patterns = PATTERNS.get_or_init(|| {
+        [
+            r"(?i)^(?P<show>.*?)[\s._-]*\bS(?P<s>\d{1,2})[\s._-]?E(?P<e>\d{1,3})\b",
+            r"(?i)^(?P<show>.*?)[\s._-]*\b(?P<s>\d{1,2})x(?P<e>\d{2,3})\b",
+            r"^(?P<show>.*?)\s+-\s+(?P<e>\d{1,3})(?:v\d+)?\b",
+        ]
+        .iter()
+        .map(|p| Regex::new(p).expect("episode pattern"))
+        .collect()
+    });
+    patterns.iter().find_map(|p| {
+        let caps = p.captures(title)?;
+        let show = show_name(&caps["show"]);
+        if show.is_empty() {
+            return None;
+        }
+        let episode: u32 = caps["e"].parse().ok()?;
+        Some(match caps.name("s") {
+            Some(s) => format!("{show}|{}x{episode}", s.as_str().parse::<u32>().ok()?),
+            None => format!("{show}|{episode}"),
+        })
+    })
+}
+
+/// Lower-case words only: bracketed tags go, and dots, dashes and underscores
+/// count as spaces.
+fn show_name(raw: &str) -> String {
+    let mut depth = 0u32;
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        match ch {
+            '[' | '(' => depth += 1,
+            ']' | ')' => depth = depth.saturating_sub(1),
+            _ if depth > 0 => {}
+            _ if ch.is_alphanumeric() => out.extend(ch.to_lowercase()),
+            _ => out.push(' '),
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -120,6 +221,8 @@ struct Seen {
     added: bool,
     /// Seconds since 1970.
     at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    episode: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -129,6 +232,8 @@ pub struct FeedItemView {
     pub link: String,
     pub published: Option<String>,
     pub matches: bool,
+    /// Another copy of this episode has been added already.
+    pub repeat: bool,
     pub added: bool,
 }
 
@@ -179,19 +284,43 @@ impl FeedsState {
     /// Records a fetch and returns the items to add. The first fetch of a feed
     /// only takes note of what is there, so its backlog is never downloaded.
     fn absorb(&mut self, feed: &Feed, items: &[FeedItem]) -> Vec<FeedItem> {
+        let filters = Filters::compile(feed).ok();
         let first_fetch = !self.seen.contains_key(&feed.id);
         let seen = self.seen.entry(feed.id.clone()).or_default();
         let at = now();
         let mut to_add = Vec::new();
+        let mut views = Vec::with_capacity(items.len());
         for item in items {
-            if seen.contains_key(&item.guid) {
-                continue;
+            let key = episode_key(&item.title);
+            let wanted = filters.as_ref().is_some_and(|f| f.matches(&item.title));
+            let repeat = feed.episode_filter
+                && key.as_ref().is_some_and(|key| {
+                    seen.iter()
+                        .any(|(g, s)| g != &item.guid && s.added && s.episode.as_ref() == Some(key))
+                });
+            if !seen.contains_key(&item.guid) {
+                let add = !first_fetch && feed.enabled && wanted && !repeat;
+                if add {
+                    to_add.push(item.clone());
+                }
+                seen.insert(
+                    item.guid.clone(),
+                    Seen {
+                        added: add,
+                        at,
+                        episode: key,
+                    },
+                );
             }
-            let add = !first_fetch && feed.enabled && matches(feed, &item.title);
-            if add {
-                to_add.push(item.clone());
-            }
-            seen.insert(item.guid.clone(), Seen { added: add, at });
+            views.push(FeedItemView {
+                guid: item.guid.clone(),
+                title: item.title.clone(),
+                link: item.link.clone(),
+                published: item.published.clone(),
+                matches: wanted,
+                repeat,
+                added: seen.get(&item.guid).is_some_and(|s| s.added),
+            });
         }
         if seen.len() > SEEN_LIMIT {
             let mut ages: Vec<u64> = seen.values().map(|s| s.at).collect();
@@ -199,18 +328,6 @@ impl FeedsState {
             let cutoff = ages[seen.len() - SEEN_LIMIT];
             seen.retain(|_, s| s.at >= cutoff);
         }
-
-        let views = items
-            .iter()
-            .map(|item| FeedItemView {
-                guid: item.guid.clone(),
-                title: item.title.clone(),
-                link: item.link.clone(),
-                published: item.published.clone(),
-                matches: matches(feed, &item.title),
-                added: seen.get(&item.guid).is_some_and(|s| s.added),
-            })
-            .collect();
         self.status.insert(
             feed.id.clone(),
             FeedStatus {
@@ -238,7 +355,14 @@ impl FeedsState {
             .find(|i| i.guid == guid)?;
         item.added = true;
         let seen = self.seen.entry(feed_id.to_string()).or_default();
-        seen.insert(guid.to_string(), Seen { added: true, at: now() });
+        seen.insert(
+            guid.to_string(),
+            Seen {
+                added: true,
+                at: now(),
+                episode: episode_key(&item.title),
+            },
+        );
         Some(item.clone())
     }
 
@@ -258,6 +382,11 @@ fn download_dir(feed: &Feed) -> Option<String> {
 /// Fetches a feed and queues whatever is new and wanted.
 pub async fn check<R: Runtime>(app: &tauri::AppHandle<R>, feed: &Feed) -> FeedStatus {
     let state = app.state::<AppState>();
+    if let Err(error) = Filters::compile(feed) {
+        let mut feeds = state.feeds.lock();
+        feeds.fail(feed, error);
+        return feeds.status.get(&feed.id).cloned().unwrap_or_default();
+    }
     let fetched = async {
         let response = state.http.get(&feed.url).send().await.map_err(|e| e.to_string())?;
         if !response.status().is_success() {
@@ -407,6 +536,72 @@ mod tests {
         assert!(matches(&feed("show, 1080p", ""), "Show S01E02 1080p"));
         assert!(!matches(&feed("show, 1080p", ""), "Show S01E01 720p"));
         assert!(!matches(&feed("show", "720p, cam"), "Show S01E01 720p"));
+    }
+
+    #[test]
+    fn patterns_filter_titles_too() {
+        let mut f = feed("", "");
+        f.must_match = r"S\d\dE\d\d.*1080p".into();
+        f.must_not_match = r"\b(cam|ts)\b".into();
+        assert!(matches(&f, "Show S01E02 1080p"));
+        assert!(matches(&f, "show s01e02 1080P"));
+        assert!(!matches(&f, "Show S01E02 720p"));
+        assert!(!matches(&f, "Show S01E02 1080p CAM"));
+        assert!(validate(&[f.clone()]).is_ok());
+
+        f.must_match = "(".into();
+        let error = validate(std::slice::from_ref(&f)).unwrap_err();
+        assert!(error.contains("must match"), "{error}");
+        assert!(!matches(&f, "Show S01E02 1080p"));
+    }
+
+    #[test]
+    fn episode_keys_ignore_group_and_quality() {
+        let key = |t: &str| episode_key(t).unwrap_or_default();
+        assert_eq!(key("Show.Name.S01E02.1080p.WEB-DL.x264-GROUP"), "show name|1x2");
+        assert_eq!(key("show name s1e2 720p other"), "show name|1x2");
+        assert_eq!(key("Show Name - S01E02 - Title"), "show name|1x2");
+        assert_eq!(key("Show Name 2x05 HDTV"), "show name|2x5");
+        assert_eq!(key("[Group] Show Name - 02 [1080p]"), "show name|2");
+        assert_eq!(key("[Other] Show_Name - 02v2 (720p)"), "show name|2");
+        assert_eq!(episode_key("Distro 13.1 netinst"), None);
+        assert_eq!(episode_key("Film (2024) 1920x1080"), None);
+        assert_eq!(episode_key("S01E02"), None);
+    }
+
+    #[test]
+    fn the_episode_filter_takes_one_copy_per_episode() {
+        let mut state = FeedsState::default();
+        let mut wanted = feed("", "");
+        wanted.episode_filter = true;
+        state.absorb(&wanted, &[]);
+        let item = |guid: &str, title: &str| FeedItem {
+            guid: guid.into(),
+            title: title.into(),
+            link: format!("https://site.example/{guid}.torrent"),
+            published: None,
+        };
+
+        let added = state.absorb(
+            &wanted,
+            &[
+                item("a", "Show S01E03 1080p-A"),
+                item("b", "Show.S01E03.720p-B"),
+                item("c", "Show S01E04 1080p-A"),
+            ],
+        );
+        let guids: Vec<&str> = added.iter().map(|i| i.guid.as_str()).collect();
+        assert_eq!(guids, ["a", "c"]);
+        let views = &state.status["f"].items;
+        let view = |g: &str| views.iter().find(|v| v.guid == g).unwrap();
+        assert!(view("b").repeat && !view("b").added);
+        assert!(!view("a").repeat && view("a").added);
+
+        // A later copy from another group is still skipped, unless the
+        // filter is off.
+        assert!(state.absorb(&wanted, &[item("d", "Show S01E03 2160p-C")]).is_empty());
+        wanted.episode_filter = false;
+        assert_eq!(state.absorb(&wanted, &[item("e", "Show S01E03 2160p-D")]).len(), 1);
     }
 
     #[test]

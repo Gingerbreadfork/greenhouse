@@ -160,6 +160,12 @@ export interface Feed {
   must_contain: string;
   /** Comma-separated words that rule a title out. */
   must_not_contain: string;
+  /** A regular expression a title must match. Empty matches anything. */
+  must_match: string;
+  /** A regular expression that rules a title out. */
+  must_not_match: string;
+  /** Take the first copy of each episode and skip the rest. */
+  episode_filter: boolean;
   /** Empty means the usual download folder. */
   download_dir: string;
 }
@@ -170,6 +176,8 @@ export interface FeedItem {
   link: string;
   published: string | null;
   matches: boolean;
+  /** Another copy of this episode has been added already. */
+  repeat: boolean;
   added: boolean;
 }
 

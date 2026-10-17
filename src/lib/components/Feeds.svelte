@@ -1,6 +1,7 @@
 <script lang="ts">
   import { open } from '@tauri-apps/plugin-dialog';
   import Icon from './Icon.svelte';
+  import Check from './Check.svelte';
   import Switch from './Switch.svelte';
   import { api } from '../api';
   import { store } from '../store.svelte';
@@ -39,6 +40,9 @@
       enabled: false,
       must_contain: '',
       must_not_contain: '',
+      must_match: '',
+      must_not_match: '',
+      episode_filter: false,
       download_dir: ''
     };
     await writeFeeds([...feeds, feed]);
@@ -62,8 +66,18 @@
 
   async function saveEditor() {
     if (!draft) return;
-    const saved = { ...draft, url: draft.url.trim() };
-    await update(saved.id, saved);
+    const saved = {
+      ...draft,
+      url: draft.url.trim(),
+      must_match: draft.must_match.trim(),
+      must_not_match: draft.must_not_match.trim()
+    };
+    try {
+      await update(saved.id, saved);
+    } catch (e) {
+      store.toast('Could not save that feed', 'bad', String(e));
+      return;
+    }
     closeEditor();
     if (saved.url) check(saved.id);
   }
@@ -219,6 +233,18 @@
               <span class="dot">·</span>
               skips {feed.must_not_contain}
             {/if}
+            {#if feed.must_match}
+              <span class="dot">·</span>
+              matches <span class="mono">{feed.must_match}</span>
+            {/if}
+            {#if feed.must_not_match}
+              <span class="dot">·</span>
+              skips <span class="mono">{feed.must_not_match}</span>
+            {/if}
+            {#if feed.episode_filter}
+              <span class="dot">·</span>
+              one copy per episode
+            {/if}
           {:else}
             No address yet
           {/if}
@@ -250,6 +276,29 @@
                 placeholder="Any of these rules an item out"
               />
             </label>
+            <label>
+              <span>Title must match</span>
+              <input
+                class="mono"
+                bind:value={draft.must_match}
+                spellcheck="false"
+                placeholder="A regular expression, case-insensitive. Empty takes everything"
+              />
+            </label>
+            <label>
+              <span>Title must not match</span>
+              <input
+                class="mono"
+                bind:value={draft.must_not_match}
+                spellcheck="false"
+                placeholder="A regular expression that rules an item out"
+              />
+            </label>
+            <Check
+              bind:checked={draft.episode_filter}
+              label="One copy of each episode"
+              hint="Reads the season and episode from titles like S01E02, 1x02 or Show - 02, and skips later releases of the same one"
+            />
             <div class="folder">
               <span>Save to</span>
               <span class="path">{draft.download_dir || 'The usual download folder'}</span>
@@ -270,15 +319,22 @@
           {#if items.length > 0}
             <ul class="items">
               {#each open ? items : items.slice(0, SHOWN) as item (item.guid)}
-                <li class={{ dim: !item.matches && !item.added }}>
+                <li class={{ dim: (!item.matches || item.repeat) && !item.added }}>
                   <span class="title" title={item.title}>{item.title}</span>
+                  {#if item.repeat && !item.added}
+                    <span class="have">have it</span>
+                  {/if}
                   <span class="when num">{day(item.published)}</span>
                   {#if item.added}
                     <span class="chip got"><Icon name="check" size={11} />Added</span>
                   {:else}
                     <button
                       class="chip add"
-                      title={item.matches ? 'Add this one' : 'Add it even though the filters skip it'}
+                      title={item.repeat
+                        ? 'Add it even though a copy of this episode was added already'
+                        : item.matches
+                          ? 'Add this one'
+                          : 'Add it even though the filters skip it'}
                       onclick={() => addItem(feed, item.guid, item.title)}
                     >
                       <Icon name="plus" size={11} stroke={2} />Add
