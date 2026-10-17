@@ -1,7 +1,6 @@
 <script lang="ts">
   import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { openPath } from '@tauri-apps/plugin-opener';
 
   import TopBar from './lib/components/TopBar.svelte';
   import Sidebar from './lib/components/Sidebar.svelte';
@@ -98,9 +97,7 @@
     if (!torrent) return;
 
     if (action === 'reveal') {
-      openPath(torrent.output_folder).catch(() =>
-        store.toast('Could not open that folder', 'bad')
-      );
+      api.openFolder(id).catch((e) => store.toast('Could not open that folder', 'bad', String(e)));
       return;
     }
 

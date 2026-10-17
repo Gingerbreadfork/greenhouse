@@ -36,6 +36,7 @@ export const api = {
 
   playFile: (id: number, fileIndex: number) =>
     invoke<PlayResult>('play_file', { id, fileIndex }),
+  openFolder: (id: number) => invoke<void>('open_folder', { id }),
 
   activityList: () => invoke<ActivityEntry[]>('activity_list'),
   clearActivity: () => invoke<void>('clear_activity'),

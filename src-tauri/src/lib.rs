@@ -135,6 +135,7 @@ pub fn run() {
             commands::torrent_action,
             commands::set_file_selection,
             commands::play_file,
+            commands::open_folder,
             commands::activity_list,
             commands::clear_activity,
             commands::feeds_status,

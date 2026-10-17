@@ -41,6 +41,8 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
       return undefined as T;
     case 'play_file':
       return { player: 'mpv', streaming: true } as T;
+    case 'open_folder':
+      return undefined as T;
     case 'blocklist_status':
       return { active: false, updated_at: null, bytes: 0 } as T;
     case 'refresh_blocklist':

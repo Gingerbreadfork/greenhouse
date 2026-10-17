@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { openPath } from '@tauri-apps/plugin-opener';
   import Icon from './Icon.svelte';
   import Check from './Check.svelte';
   import TrackerEditor from './TrackerEditor.svelte';
@@ -133,6 +132,10 @@
       store.toast(`Could not copy the ${what.toLowerCase()}`, 'bad');
     }
   }
+
+  function openFolder() {
+    api.openFolder(torrent.id).catch((e) => store.toast('Could not open that folder', 'bad', String(e)));
+  }
 </script>
 
 <aside class="inspector">
@@ -180,7 +183,7 @@
       {/if}
 
       <div class="rows">
-        <button class="rowbtn" onclick={() => openPath(torrent.output_folder)}>
+        <button class="rowbtn" onclick={openFolder}>
           <Icon name="folder" size={14} />
           <span class="path"><bdi dir="ltr">{torrent.output_folder}</bdi></span>
           <Icon name="external" size={13} />

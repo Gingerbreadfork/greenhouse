@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -606,6 +606,33 @@ pub async fn play_file(
         player,
         streaming: !finished,
     })
+}
+
+/// Opens the folder a torrent's files live in with the system file manager.
+/// Before anything has been written that folder may not exist yet, so the
+/// closest folder that does is opened instead.
+#[tauri::command]
+pub async fn open_folder(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: usize,
+) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+
+    let handle = state
+        .session()
+        .get(id.into())
+        .ok_or("that torrent is no longer in the session")?;
+    let folder = nearest_existing_folder(handle.output_folder())
+        .ok_or("that folder does not exist")?;
+    app.opener()
+        .open_path(folder.to_string_lossy(), None::<&str>)
+        .map_err(err)
+}
+
+/// The path itself if it is a folder, else the first ancestor that is.
+fn nearest_existing_folder(path: &Path) -> Option<PathBuf> {
+    path.ancestors().find(|p| p.is_dir()).map(Path::to_path_buf)
 }
 
 // ---------------------------------------------------------------- adding
@@ -1636,6 +1663,21 @@ pub async fn restore_inner(state: &AppState, token: RestoreToken) -> CmdResult<u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_folder_falls_back_to_the_closest_existing_folder() {
+        let root = std::env::temp_dir().join(format!("gh-open-{}", std::process::id()));
+        let inner = root.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        std::fs::write(inner.join("file"), b"x").unwrap();
+
+        assert_eq!(nearest_existing_folder(&inner), Some(inner.clone()));
+        let missing = inner.join("not").join("yet");
+        assert_eq!(nearest_existing_folder(&missing), Some(inner.clone()));
+        assert_eq!(nearest_existing_folder(&inner.join("file")), Some(inner.clone()));
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     /// The exact payloads `src/lib/api.ts` sends must deserialize into the
     /// command argument types, so the two halves cannot drift apart silently.
