@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   ActivityEntry,
   ApplyTrackersResult,
+  BulkApplyResult,
   RestoreToken,
   Bootstrap,
   BlocklistStatus,
@@ -65,9 +66,9 @@ export const api = {
   applyTrackers: (id: number, trackers: string[], replace: boolean) =>
     invoke<ApplyTrackersResult>('apply_trackers', { id, trackers, replace }),
   applyTrackersToAll: (trackers: string[]) =>
-    invoke<number>('apply_trackers_to_all', { trackers }),
+    invoke<BulkApplyResult>('apply_trackers_to_all', { trackers }),
   applyTrackersMany: (ids: number[], trackers: string[]) =>
-    invoke<number>('apply_trackers_many', { ids, trackers }),
+    invoke<BulkApplyResult>('apply_trackers_many', { ids, trackers }),
   magnetLink: (id: number) => invoke<string>('magnet_link', { id }),
   forgetTorrent: (id: number) => invoke<RestoreToken>('forget_torrent', { id }),
   restoreTorrent: (token: RestoreToken) => invoke<number>('restore_torrent', { token })

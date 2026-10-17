@@ -160,6 +160,7 @@ mod tests {
             tracker_count: 0,
             ratio: 0.0,
             has_metadata: true,
+            private: false,
         }
     }
 

@@ -28,6 +28,8 @@ export interface TorrentRow {
   tracker_count: number;
   ratio: number;
   has_metadata: boolean;
+  /** Marked private in its metainfo, so only its own trackers announce it. */
+  private: boolean;
 }
 
 export interface SessionSummary {
@@ -222,6 +224,7 @@ export interface StagedInfo {
   skipped: number[];
   resolved: boolean;
   needs_resolve: boolean;
+  private: boolean;
 }
 
 export interface CommitResult {
@@ -255,4 +258,10 @@ export interface ApplyTrackersResult {
   id: number;
   tracker_count: number;
   added: number;
+}
+
+export interface BulkApplyResult {
+  changed: number;
+  /** Private torrents, which keep their own trackers. */
+  skipped_private: number;
 }

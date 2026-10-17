@@ -53,6 +53,13 @@ Pasted lists can be separated by newlines, commas or spaces. Comments and
 anything that is not an `http`, `https`, `udp`, `ws` or `wss` URL are dropped,
 and duplicates are removed case-insensitively.
 
+**Private torrents are left alone.** A torrent whose metainfo carries the
+private flag is only ever announced to the trackers it came with. Packs are
+not attached when it is added, *Apply to existing torrents* skips it and says
+so, and the add sheet and the *Trackers* tab both point it out. A magnet link
+cannot say whether it is private until its metadata arrives, so packs are
+decided then.
+
 ---
 
 ## Adding torrents

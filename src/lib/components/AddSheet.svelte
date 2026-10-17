@@ -42,13 +42,16 @@
   const autoPacks = $derived(settings.packs.filter((p) => p.enabled));
   const optionalPacks = $derived(settings.packs.filter((p) => !p.enabled));
 
+  // A private torrent keeps the trackers it came with and nothing else.
   const chosenTrackers = $derived(
-    uniqueTrackers(
-      info.trackers,
-      useAuto ? autoPacks.flatMap((p) => p.trackers) : [],
-      settings.packs.filter((p) => extraPackIds.includes(p.id)).flatMap((p) => p.trackers),
-      parseTrackerBlob(extraText)
-    )
+    info.private
+      ? uniqueTrackers(info.trackers)
+      : uniqueTrackers(
+          info.trackers,
+          useAuto ? autoPacks.flatMap((p) => p.trackers) : [],
+          settings.packs.filter((p) => extraPackIds.includes(p.id)).flatMap((p) => p.trackers),
+          parseTrackerBlob(extraText)
+        )
   );
 
   const injected = $derived(chosenTrackers.length - info.trackers.length);
@@ -202,45 +205,55 @@
       </span>
     </div>
 
-    <div class="packs">
-      <Check
-        bind:checked={useAuto}
-        label="Add my tracker packs"
-        hint={autoPacks.length === 0
-          ? 'No packs are set to apply automatically yet'
-          : `${autoPacks.map((p) => p.name).join(', ')} · ${autoPacks.reduce((n, p) => n + p.trackers.length, 0)} trackers`}
-        disabled={autoPacks.length === 0}
-      />
-
-      {#each optionalPacks as pack (pack.id)}
+    {#if info.private}
+      <p class="skipnote">
+        <Icon name="lock" size={13} />
+        <span>
+          This is a private torrent. Only the trackers it came with will announce it, so no
+          packs are attached.
+        </span>
+      </p>
+    {:else}
+      <div class="packs">
         <Check
-          checked={extraPackIds.includes(pack.id)}
-          label={pack.name}
-          hint="{pack.trackers.length} trackers · just for this torrent"
-          onchange={(on) => togglePack(pack.id, on)}
+          bind:checked={useAuto}
+          label="Add my tracker packs"
+          hint={autoPacks.length === 0
+            ? 'No packs are set to apply automatically yet'
+            : `${autoPacks.map((p) => p.name).join(', ')} · ${autoPacks.reduce((n, p) => n + p.trackers.length, 0)} trackers`}
+          disabled={autoPacks.length === 0}
         />
-      {/each}
 
-      {#if showExtra}
-        <div class="extra">
-          <textarea
-            bind:value={extraText}
-            rows="4"
-            spellcheck="false"
-            placeholder="One tracker URL per line"
-            data-autofocus
-          ></textarea>
-          <p class="note">
-            {parseTrackerBlob(extraText).length} valid URLs recognised
-          </p>
-        </div>
-      {:else}
-        <button class="link" onclick={() => (showExtra = true)}>
-          <Icon name="plus" size={13} stroke={2} />
-          Paste extra trackers for this torrent
-        </button>
-      {/if}
-    </div>
+        {#each optionalPacks as pack (pack.id)}
+          <Check
+            checked={extraPackIds.includes(pack.id)}
+            label={pack.name}
+            hint="{pack.trackers.length} trackers · just for this torrent"
+            onchange={(on) => togglePack(pack.id, on)}
+          />
+        {/each}
+
+        {#if showExtra}
+          <div class="extra">
+            <textarea
+              bind:value={extraText}
+              rows="4"
+              spellcheck="false"
+              placeholder="One tracker URL per line"
+              data-autofocus
+            ></textarea>
+            <p class="note">
+              {parseTrackerBlob(extraText).length} valid URLs recognised
+            </p>
+          </div>
+        {:else}
+          <button class="link" onclick={() => (showExtra = true)}>
+            <Icon name="plus" size={13} stroke={2} />
+            Paste extra trackers for this torrent
+          </button>
+        {/if}
+      </div>
+    {/if}
   </section>
 
   {#if info.files.length > 1}

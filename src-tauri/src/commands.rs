@@ -87,6 +87,8 @@ pub struct Staged {
     pub files: Vec<StagedFile>,
     pub skipped: Vec<usize>,
     pub resolved: bool,
+    /// The metainfo's private flag: only its own trackers may announce it.
+    pub private: bool,
     pub queued: Option<Queued>,
 }
 
@@ -112,6 +114,7 @@ pub struct StagedInfo {
     pub skipped: Vec<usize>,
     pub resolved: bool,
     pub needs_resolve: bool,
+    pub private: bool,
 }
 
 impl StagedInfo {
@@ -128,6 +131,7 @@ impl StagedInfo {
             skipped: s.skipped.clone(),
             resolved: s.resolved,
             needs_resolve: !s.resolved,
+            private: s.private,
         }
     }
 }
@@ -664,6 +668,7 @@ pub async fn stage_source(
                 files: Vec::new(),
                 skipped: Vec::new(),
                 resolved: false,
+                private: false,
                 queued: None,
             }
         }
@@ -706,6 +711,7 @@ fn staged_from_text(value: &str) -> CmdResult<Staged> {
         files: Vec::new(),
         skipped: Vec::new(),
         resolved: false,
+        private: false,
         queued: None,
     })
 }
@@ -807,6 +813,7 @@ async fn resolve(
     out.files = files;
     out.bytes = Some(listed.torrent_bytes);
     out.resolved = true;
+    out.private = listed.info.info().private;
     Ok(out)
 }
 
@@ -1042,6 +1049,7 @@ pub fn restore_queue<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 files: Vec::new(),
                 skipped: Vec::new(),
                 resolved: false,
+                private: false,
                 queued: Some(Queued {
                     request: CommitRequest { token: token.clone(), ..record.request },
                     since: UNIX_EPOCH + Duration::from_secs(record.queued_at),
@@ -1175,6 +1183,7 @@ pub async fn add_file_with_defaults(
         files: Vec::new(),
         skipped: Vec::new(),
         resolved: false,
+        private: false,
         queued: None,
     };
     let mut staged = resolve(&state.session(), &staged, &[]).await.map_err(err)?;
@@ -1196,7 +1205,15 @@ pub async fn add_file_with_defaults(
 }
 
 fn commit_trackers(state: &AppState, staged: &Staged, request: &CommitRequest) -> Vec<String> {
-    let settings = state.settings.read();
+    trackers_for(&state.settings.read(), staged, request)
+}
+
+/// The trackers a new torrent is added with. A private torrent keeps only
+/// its own: announcing it anywhere else is what private trackers ban for.
+fn trackers_for(settings: &Settings, staged: &Staged, request: &CommitRequest) -> Vec<String> {
+    if staged.private {
+        return torrentsrc::merge_trackers(&[&staged.trackers]);
+    }
     let auto = if request.use_auto_packs {
         settings.active_trackers()
     } else {
@@ -1507,12 +1524,19 @@ fn magnet_for(info_hash: &str, name: Option<&str>, trackers: &[String]) -> Strin
     uri
 }
 
+#[derive(Serialize, Clone)]
+pub struct BulkApplyResult {
+    pub changed: usize,
+    /// Private torrents, which are left with their own trackers.
+    pub skipped_private: usize,
+}
+
 /// Bulk-applies the current tracker selection to every torrent in the session.
 #[tauri::command]
 pub async fn apply_trackers_to_all(
     state: tauri::State<'_, AppState>,
     trackers: Vec<String>,
-) -> CmdResult<usize> {
+) -> CmdResult<BulkApplyResult> {
     let ids: Vec<usize> = engine::collect_rows(&state.session())
         .iter()
         .map(|r| r.id)
@@ -1526,7 +1550,7 @@ pub async fn apply_trackers_many(
     state: tauri::State<'_, AppState>,
     ids: Vec<usize>,
     trackers: Vec<String>,
-) -> CmdResult<usize> {
+) -> CmdResult<BulkApplyResult> {
     apply_to_each(&state, ids, trackers).await
 }
 
@@ -1534,18 +1558,30 @@ async fn apply_to_each(
     state: &AppState,
     ids: Vec<usize>,
     trackers: Vec<String>,
-) -> CmdResult<usize> {
+) -> CmdResult<BulkApplyResult> {
     let mut changed = 0usize;
+    let mut skipped_private = 0usize;
     let mut last_error = None;
     for id in ids {
+        if state
+            .session()
+            .get(id.into())
+            .is_some_and(|h| engine::is_private(&h))
+        {
+            skipped_private += 1;
+            continue;
+        }
         match apply_trackers_inner(state, id, trackers.clone(), false).await {
             Ok(_) => changed += 1,
             Err(e) => last_error = Some(e),
         }
     }
     match last_error {
-        Some(e) if changed == 0 => Err(e),
-        _ => Ok(changed),
+        Some(e) if changed == 0 && skipped_private == 0 => Err(e),
+        _ => Ok(BulkApplyResult {
+            changed,
+            skipped_private,
+        }),
     }
 }
 
@@ -1790,6 +1826,71 @@ mod tests {
             http: reqwest::Client::new(),
         });
         app
+    }
+
+    /// A one-byte single-file torrent, private or not.
+    fn torrent_bytes(private: bool) -> Vec<u8> {
+        let flag = if private { "7:privatei1e" } else { "" };
+        format!(
+            "d8:announce18:udp://a:1/announce4:infod6:lengthi1e4:name1:a\
+             12:piece lengthi16384e6:pieces20:AAAAAAAAAAAAAAAAAAAA{flag}ee"
+        )
+        .into_bytes()
+    }
+
+    fn staged_file(bytes: Vec<u8>) -> Staged {
+        Staged {
+            kind: "file".into(),
+            source: "a.torrent".into(),
+            bytes: Some(Bytes::from(bytes)),
+            info_hash: None,
+            name: None,
+            total_bytes: 0,
+            trackers: Vec::new(),
+            files: Vec::new(),
+            skipped: Vec::new(),
+            resolved: false,
+            private: false,
+            queued: None,
+        }
+    }
+
+    #[test]
+    fn the_private_flag_is_read_from_the_file() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("private", false).await;
+            let state = app.state::<AppState>();
+            for private in [false, true] {
+                let staged = staged_file(torrent_bytes(private));
+                let resolved = resolve(&state.session(), &staged, &[]).await.unwrap();
+                assert_eq!(resolved.private, private);
+                assert_eq!(resolved.files.len(), 1);
+            }
+        });
+    }
+
+    #[test]
+    fn a_private_torrent_keeps_only_its_own_trackers() {
+        let settings = Settings::default();
+        let own = vec!["https://private.example/announce?passkey=abc".to_string()];
+        let staged = Staged {
+            trackers: own.clone(),
+            private: true,
+            ..staged_file(Vec::new())
+        };
+        let request = CommitRequest {
+            use_auto_packs: true,
+            pack_ids: vec!["starter".into()],
+            extra_trackers: vec!["udp://open.example:1337/announce".into()],
+            ..commit_request("t")
+        };
+        assert_eq!(trackers_for(&settings, &staged, &request), own);
+
+        let public = Staged {
+            private: false,
+            ..staged
+        };
+        assert!(trackers_for(&settings, &public, &request).len() > own.len());
     }
 
     fn commit_request(token: &str) -> CommitRequest {
@@ -2422,6 +2523,7 @@ mod tests {
             files: vec![file(0), file(1), file(2)],
             skipped: vec![1],
             resolved: true,
+            private: false,
             queued: None,
         };
         assert_eq!(default_selection(&staged), Some(vec![0, 2]));
@@ -2445,6 +2547,7 @@ mod tests {
             ],
             skipped: vec![],
             resolved: true,
+            private: false,
             queued: None,
         };
         let single = Staged { files: vec![], ..multi.clone() };

@@ -7,9 +7,15 @@
 
   let {
     torrentId,
+    isPrivate = false,
     trackers,
     onapplied
-  }: { torrentId: number; trackers: string[]; onapplied: (newId: number) => void } = $props();
+  }: {
+    torrentId: number;
+    isPrivate?: boolean;
+    trackers: string[];
+    onapplied: (newId: number) => void;
+  } = $props();
 
   let staged = $state<string[]>([]);
   let dropped = $state<string[]>([]);
@@ -78,14 +84,25 @@
 </script>
 
 <div class="editor">
+  {#if isPrivate}
+    <p class="private">
+      <Icon name="lock" size={13} />
+      <span>
+        A private torrent. Its tracker expects to be the only one announcing it, so packs are
+        not offered here. You can still paste a tracker by hand.
+      </span>
+    </p>
+  {/if}
   <div class="quick">
-    {#each packs as pack (pack.id)}
-      <button class="chip" onclick={() => addList(pack.trackers, pack.name)}>
-        <Icon name="plus" size={12} stroke={2.2} />
-        {pack.name}
-        <span class="n num">{pack.trackers.length}</span>
-      </button>
-    {/each}
+    {#if !isPrivate}
+      {#each packs as pack (pack.id)}
+        <button class="chip" onclick={() => addList(pack.trackers, pack.name)}>
+          <Icon name="plus" size={12} stroke={2.2} />
+          {pack.name}
+          <span class="n num">{pack.trackers.length}</span>
+        </button>
+      {/each}
+    {/if}
     <button class="chip" onclick={() => (showPaste = !showPaste)}>
       <Icon name="layers" size={12} />
       Paste a list
@@ -146,6 +163,21 @@
 
 <style>
   .editor { display: flex; flex-direction: column; gap: 12px; }
+
+  .private {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0;
+    padding: 8px 10px;
+    border-radius: var(--r-md);
+    background: var(--surface-2, var(--ground));
+    color: var(--ink-dim);
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+
+  .private span { flex: 1; }
 
   .quick {
     display: flex;

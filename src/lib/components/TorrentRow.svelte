@@ -96,6 +96,9 @@
       <p class="meta">
         <span class="word">{mark.word}</span>
         <span class="dim">{detail}</span>
+        {#if torrent.private}
+          <span class="dim">· private</span>
+        {/if}
       </p>
     </div>
   </div>

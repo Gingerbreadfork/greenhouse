@@ -81,10 +81,13 @@
     }
     busy = label;
     try {
-      const count = await api.applyTrackersToAll(list);
+      const { changed, skipped_private } = await api.applyTrackersToAll(list);
       store.toast(
-        count === 1 ? 'Trackers added to 1 torrent' : `Trackers added to ${count} torrents`,
-        'good'
+        changed === 1 ? 'Trackers added to 1 torrent' : `Trackers added to ${changed} torrents`,
+        'good',
+        skipped_private > 0
+          ? `${skipped_private} private ${skipped_private === 1 ? 'torrent keeps' : 'torrents keep'} their own trackers`
+          : undefined
       );
     } catch (e) {
       store.toast('Could not apply the trackers', 'bad', String(e));

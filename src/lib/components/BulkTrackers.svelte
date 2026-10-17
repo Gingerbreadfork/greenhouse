@@ -35,7 +35,7 @@
   async function apply() {
     applying = true;
     try {
-      const changed = await api.applyTrackersMany(
+      const { changed, skipped_private } = await api.applyTrackersMany(
         torrents.map((t) => t.id),
         trackers
       );
@@ -44,7 +44,9 @@
           ? `Trackers added to 1 torrent`
           : `Trackers added to ${changed} torrents`,
         'good',
-        `${trackers.length} trackers applied`
+        skipped_private > 0
+          ? `${trackers.length} trackers applied · ${skipped_private} private ${skipped_private === 1 ? 'torrent' : 'torrents'} left alone`
+          : `${trackers.length} trackers applied`
       );
       onclose();
     } catch (e) {

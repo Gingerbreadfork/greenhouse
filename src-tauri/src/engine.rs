@@ -269,6 +269,15 @@ pub struct TorrentRow {
     pub tracker_count: usize,
     pub ratio: f64,
     pub has_metadata: bool,
+    pub private: bool,
+}
+
+/// Whether the metainfo marks the torrent private, so only its own trackers
+/// may announce it. Unknown until the metadata has arrived.
+pub fn is_private(handle: &librqbit::ManagedTorrent) -> bool {
+    handle
+        .with_metadata(|m| m.info.info().private)
+        .unwrap_or(false)
 }
 
 /// Collapses the engine's state machine into the five states the UI shows.
@@ -348,6 +357,7 @@ pub fn collect_rows(session: &Arc<Session>) -> Vec<TorrentRow> {
                     tracker_count: handle.shared().trackers.len(),
                     ratio,
                     has_metadata,
+                    private: is_private(handle),
                 }
             })
             .collect()

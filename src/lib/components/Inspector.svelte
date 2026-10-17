@@ -173,6 +173,9 @@
         <div><dt>Share ratio</dt><dd class="num">{ratio(torrent.ratio)}</dd></div>
         <div><dt>Uploaded</dt><dd class="num">{bytes(torrent.uploaded_bytes)}</dd></div>
         <div><dt>Connected peers</dt><dd class="num">{torrent.peers_live} of {torrent.peers_seen} seen</dd></div>
+        {#if torrent.private}
+          <div><dt>Swarm</dt><dd>Private · its own trackers only</dd></div>
+        {/if}
         {#if detail && detail.total_pieces > 0}
           <div><dt>Pieces</dt><dd class="num">{detail.total_pieces} × {bytes(detail.piece_size)}</dd></div>
         {/if}
@@ -253,6 +256,7 @@
     {:else if tab === 'trackers'}
       <TrackerEditor
         torrentId={torrent.id}
+        isPrivate={torrent.private}
         trackers={detail?.trackers ?? []}
         onapplied={(newId) => {
           store.selectOnly(newId);

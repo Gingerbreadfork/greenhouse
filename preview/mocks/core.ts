@@ -86,7 +86,8 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
         files: detail.files,
         skipped: [],
         resolved: true,
-        needs_resolve: false
+        needs_resolve: false,
+        private: false
       } as T;
     case 'commit_staged':
       return {
@@ -99,9 +100,9 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
     case 'apply_trackers':
       return { id: args?.id, tracker_count: 20, added: 6 } as T;
     case 'apply_trackers_to_all':
-      return live.length as T;
+      return { changed: live.length, skipped_private: 0 } as T;
     case 'apply_trackers_many':
-      return (args?.ids?.length ?? 0) as T;
+      return { changed: args?.ids?.length ?? 0, skipped_private: 0 } as T;
     case 'magnet_link':
       return `magnet:?xt=urn:btih:${'0'.repeat(40)}&dn=preview` as T;
     case 'forget_torrent': {

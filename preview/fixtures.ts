@@ -24,6 +24,7 @@ export const torrents: TorrentRow[] = [
     finished: false,
     output_folder: '/home/you/Downloads',
     tracker_count: 14,
+    private: false,
     ratio: 0.11,
     has_metadata: true
   },
@@ -47,6 +48,7 @@ export const torrents: TorrentRow[] = [
     finished: false,
     output_folder: '/home/you/Downloads/Big Buck Bunny',
     tracker_count: 22,
+    private: false,
     ratio: 0.02,
     has_metadata: true
   },
@@ -70,6 +72,7 @@ export const torrents: TorrentRow[] = [
     finished: true,
     output_folder: '/home/you/Downloads',
     tracker_count: 14,
+    private: false,
     ratio: 4.29,
     has_metadata: true
   },
@@ -93,6 +96,7 @@ export const torrents: TorrentRow[] = [
     finished: true,
     output_folder: '/home/you/Media/Open movies',
     tracker_count: 8,
+    private: false,
     ratio: 0.41,
     has_metadata: true
   },
@@ -116,6 +120,7 @@ export const torrents: TorrentRow[] = [
     finished: false,
     output_folder: '/home/you/Downloads',
     tracker_count: 14,
+    private: false,
     ratio: 0,
     has_metadata: true
   },
@@ -139,6 +144,7 @@ export const torrents: TorrentRow[] = [
     finished: false,
     output_folder: '/home/you/Media/Archive',
     tracker_count: 6,
+    private: true,
     ratio: 0.02,
     has_metadata: true
   },
@@ -162,6 +168,7 @@ export const torrents: TorrentRow[] = [
     finished: false,
     output_folder: '/home/you/Downloads',
     tracker_count: 22,
+    private: false,
     ratio: 0,
     has_metadata: false
   },
@@ -185,6 +192,7 @@ export const torrents: TorrentRow[] = [
     finished: true,
     output_folder: '/home/you/Audio',
     tracker_count: 14,
+    private: false,
     ratio: 1.42,
     has_metadata: true
   },
@@ -208,6 +216,7 @@ export const torrents: TorrentRow[] = [
     finished: false,
     output_folder: '/home/you/Downloads',
     tracker_count: 14,
+    private: false,
     ratio: 0.03,
     has_metadata: true
   }
