@@ -60,6 +60,8 @@ class Store {
   defaultDir = $state('');
   /** The interface traffic is tied to for this run, if any. */
   boundInterface = $state<string | null>(null);
+  /** Whether Greenhouse checks for and installs its own updates. */
+  selfUpdates = $state(true);
 
   /** A newer release the updater found, until it is installed. */
   update = $state<UpdateHandle | null>(null);
@@ -193,6 +195,7 @@ class Store {
     this.platform = boot.platform;
     this.defaultDir = boot.default_download_dir;
     this.boundInterface = boot.bound_interface;
+    this.selfUpdates = boot.self_updates;
     this.appliedNetwork = networkKey(boot.settings);
     for (const warning of boot.warnings) this.toast('Check your network settings', 'bad', warning);
     this.applyChrome();
@@ -225,7 +228,7 @@ class Store {
   scheduleUpdateChecks() {
     if (this.updateTimer) clearInterval(this.updateTimer);
     this.updateTimer = null;
-    if (!this.settings?.check_updates) return;
+    if (!this.selfUpdates || !this.settings?.check_updates) return;
     void this.checkForUpdate();
     this.updateTimer = setInterval(() => void this.checkForUpdate(), UPDATE_EVERY);
   }

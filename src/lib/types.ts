@@ -140,6 +140,8 @@ export interface Bootstrap {
   /** The interface traffic is tied to for this run, if any. */
   bound_interface: string | null;
   warnings: string[];
+  /** False when a store such as Flathub updates Greenhouse instead. */
+  self_updates: boolean;
 }
 
 export interface ActivityEntry {

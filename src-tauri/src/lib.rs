@@ -5,6 +5,7 @@ mod commands;
 mod engine;
 mod fdlimit;
 mod feeds;
+mod flatpak;
 mod seeding;
 mod supervisor;
 mod settings;
@@ -34,7 +35,7 @@ pub fn run() {
     fdlimit::raise();
     activation::stash_launch_token();
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         // Registered first so a second launch hands its arguments to the
         // running window.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -62,10 +63,15 @@ pub fn run() {
             }
         })
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+    // A Flatpak is updated by the store it came from.
+    if flatpak::app_id().is_none() {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+
+    builder
         .setup(|app| {
             // Only a first launch gets here, and GTK has already used its token.
             activation::take_launch_token();

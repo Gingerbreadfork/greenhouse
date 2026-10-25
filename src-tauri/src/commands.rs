@@ -154,6 +154,8 @@ pub struct Bootstrap {
     pub platform: &'static str,
     pub bound_interface: Option<String>,
     pub warnings: Vec<String>,
+    /// Whether Greenhouse updates itself, rather than a store updating it.
+    pub self_updates: bool,
 }
 
 #[tauri::command]
@@ -169,6 +171,7 @@ pub fn bootstrap(state: tauri::State<'_, AppState>) -> Bootstrap {
         platform: std::env::consts::OS,
         bound_interface: state.engine.get().bound_interface.clone(),
         warnings: state.startup_warnings.clone(),
+        self_updates: crate::flatpak::app_id().is_none(),
     }
 }
 

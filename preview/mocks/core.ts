@@ -22,7 +22,8 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
         home_dir: '/home/you',
         platform: 'linux',
         bound_interface: null,
-        warnings: []
+        warnings: [],
+        self_updates: true
       } as T;
     case 'activity_list':
       return activity as T;

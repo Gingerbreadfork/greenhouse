@@ -551,51 +551,60 @@
 
   <section class="group">
     <h2>Updates</h2>
-    <div class="field">
-      <div class="field-text">
-        <span class="label">Check for updates</span>
-        <span class="hint">
-          Looks at the releases on GitHub when Greenhouse starts and every six hours.
-        </span>
+    {#if store.selfUpdates}
+      <div class="field">
+        <div class="field-text">
+          <span class="label">Check for updates</span>
+          <span class="hint">
+            Looks at the releases on GitHub when Greenhouse starts and every six hours.
+          </span>
+        </div>
+        <Switch
+          checked={settings.check_updates}
+          onchange={(on) => store.patchSettings({ check_updates: on })}
+        />
       </div>
-      <Switch
-        checked={settings.check_updates}
-        onchange={(on) => store.patchSettings({ check_updates: on })}
-      />
-    </div>
-    <div class="field">
-      <div class="field-text">
-        <span class="label">Install updates automatically</span>
-        <span class="hint">Downloads a new version as soon as it is found, then restarts.</span>
+      <div class="field">
+        <div class="field-text">
+          <span class="label">Install updates automatically</span>
+          <span class="hint">Downloads a new version as soon as it is found, then restarts.</span>
+        </div>
+        <Switch
+          checked={settings.install_updates}
+          onchange={(on) => store.patchSettings({ install_updates: on })}
+        />
       </div>
-      <Switch
-        checked={settings.install_updates}
-        onchange={(on) => store.patchSettings({ install_updates: on })}
-      />
-    </div>
-    <div class="field">
-      <div class="field-text">
-        <span class="label">
-          {#if store.update}
-            Greenhouse {store.update.version} is available
-          {:else}
-            Version {store.version}
-          {/if}
-        </span>
-        <span class="hint">{updateStatus}</span>
+      <div class="field">
+        <div class="field-text">
+          <span class="label">
+            {#if store.update}
+              Greenhouse {store.update.version} is available
+            {:else}
+              Version {store.version}
+            {/if}
+          </span>
+          <span class="hint">{updateStatus}</span>
+        </div>
+        {#if store.update}
+          <button
+            class="btn"
+            disabled={store.updateProgress !== null}
+            onclick={() => store.installUpdate()}
+          >
+            {store.updateProgress === null ? 'Install' : `${Math.round(store.updateProgress * 100)}%`}
+          </button>
+        {:else}
+          <button class="btn" onclick={() => store.checkForUpdate(true)}>Check now</button>
+        {/if}
       </div>
-      {#if store.update}
-        <button
-          class="btn"
-          disabled={store.updateProgress !== null}
-          onclick={() => store.installUpdate()}
-        >
-          {store.updateProgress === null ? 'Install' : `${Math.round(store.updateProgress * 100)}%`}
-        </button>
-      {:else}
-        <button class="btn" onclick={() => store.checkForUpdate(true)}>Check now</button>
-      {/if}
-    </div>
+    {:else}
+      <div class="field">
+        <div class="field-text">
+          <span class="label">Version {store.version}</span>
+          <span class="hint">Updates come from the app store Greenhouse was installed from.</span>
+        </div>
+      </div>
+    {/if}
   </section>
 
   <section class="group">
