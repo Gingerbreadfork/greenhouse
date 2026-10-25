@@ -132,6 +132,10 @@ fn build_tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
+    // The tray draws the icon from a file, which has to be where the host can read it.
+    if let Some(dir) = crate::flatpak::shared_runtime_dir() {
+        tray = tray.temp_dir_path(dir);
+    }
     tray.build(app)?;
 
     match app.try_state::<TrayMenu<R>>() {

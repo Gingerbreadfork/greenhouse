@@ -35,16 +35,23 @@ pub fn run() {
     fdlimit::raise();
     activation::stash_launch_token();
 
-    let mut builder = tauri::Builder::default()
-        // Registered first so a second launch hands its arguments to the
-        // running window.
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+    let mut single_instance =
+        tauri_plugin_single_instance::Builder::new().callback(|app, argv, _cwd| {
             let args = launch_arguments(argv.into_iter().skip(1));
             if !args.is_empty() {
                 let _ = app.emit("greenhouse://open", args);
             }
             background::show(app, activation::take_launch_token());
-        }))
+        });
+    // A Flatpak may only own bus names under its own app ID.
+    if let Some(id) = flatpak::app_id() {
+        single_instance = single_instance.dbus_id(id);
+    }
+
+    let mut builder = tauri::Builder::default()
+        // Registered first so a second launch hands its arguments to the
+        // running window.
+        .plugin(single_instance.build())
         // Whether the window shows is ours to decide, not something to restore.
         .plugin(
             tauri_plugin_window_state::Builder::default()

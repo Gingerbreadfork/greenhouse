@@ -1,9 +1,17 @@
 //! Running inside a Flatpak sandbox, where updates come from the store and
 //! starting at login goes through a portal.
 
+use std::path::PathBuf;
+
 /// The app ID, when running as a Flatpak.
 pub fn app_id() -> Option<String> {
     std::env::var("FLATPAK_ID").ok().filter(|id| !id.is_empty())
+}
+
+/// The runtime folder shared by every launch of the app and visible to the
+/// host. Each Flatpak launch otherwise gets a private one.
+pub fn shared_runtime_dir() -> Option<PathBuf> {
+    Some(dirs::runtime_dir()?.join("app").join(app_id()?))
 }
 
 /// Asks the Background portal to add or remove the login entry, since the

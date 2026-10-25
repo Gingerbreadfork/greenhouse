@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use tauri::{Runtime, WebviewWindow};
 
 fn token_file() -> Option<PathBuf> {
-    Some(dirs::runtime_dir()?.join("greenhouse-activation"))
+    let dir = crate::flatpak::shared_runtime_dir().or_else(dirs::runtime_dir)?;
+    Some(dir.join("greenhouse-activation"))
 }
 
 /// Saves this launch's token. Call before GTK starts, which consumes it.
