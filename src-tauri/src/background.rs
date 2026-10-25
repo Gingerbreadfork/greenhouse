@@ -255,6 +255,10 @@ fn write_autostart(
 /// Makes the login entry match the setting.
 #[cfg(not(windows))]
 pub fn sync_autostart(wanted: bool) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if crate::flatpak::app_id().is_some() {
+        return crate::flatpak::request_autostart(wanted);
+    }
     let dir = autostart_dir().ok_or("there is no config folder to put it in")?;
     let program = own_program().ok_or("could not work out where Greenhouse is installed")?;
     write_autostart(&dir, &program, wanted).map_err(|e| e.to_string())

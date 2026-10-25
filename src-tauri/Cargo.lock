@@ -1916,6 +1916,7 @@ dependencies = [
  "uuid",
  "windows-sys 0.59.0",
  "winreg",
+ "zbus",
 ]
 
 [[package]]
