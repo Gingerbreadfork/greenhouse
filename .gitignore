@@ -10,3 +10,13 @@ src-tauri/gen/schemas/
 
 *.log
 .DS_Store
+
+# flatpak/generate.sh output and local Flatpak builds
+flatpak/.tools/
+flatpak/flathub/
+flatpak/shared-modules/
+flatpak/cargo-sources.json
+flatpak/node-sources.json
+flatpak/.flatpak-builder/
+flatpak/build-dir/
+flatpak/repo/

@@ -1,0 +1,60 @@
+id: io.github.Gingerbreadfork.Greenhouse
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node22
+command: greenhouse
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --filesystem=xdg-download
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
+
+modules:
+  - shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json
+
+  - name: greenhouse
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node22/bin
+      env:
+        CARGO_HOME: /run/build/greenhouse/cargo
+        CARGO_NET_OFFLINE: 'true'
+        XDG_CACHE_HOME: /run/build/greenhouse/flatpak-node/cache
+    build-commands:
+      - node pnpm/bin/pnpm.cjs install --offline --frozen-lockfile
+      - node pnpm/bin/pnpm.cjs build
+      - cargo build --release --locked --features tauri/custom-protocol --manifest-path
+        src-tauri/Cargo.toml
+      - install -Dm755 src-tauri/target/release/greenhouse -t /app/bin
+      - install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/${FLATPAK_ID}.png
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/${FLATPAK_ID}.png
+      - install -Dm644 src-tauri/icons/128x128@2x.png /app/share/icons/hicolor/256x256/apps/${FLATPAK_ID}.png
+      - install -Dm644 src-tauri/greenhouse.desktop /app/share/applications/${FLATPAK_ID}.desktop
+      - desktop-file-edit --set-icon=${FLATPAK_ID} /app/share/applications/${FLATPAK_ID}.desktop
+      - install -Dm644 flatpak/${FLATPAK_ID}.metainfo.xml -t /app/share/metainfo
+    sources:
+      # Replaced by the release tag and commit in the Flathub copy.
+      - type: dir
+        path: ..
+        skip:
+          - .git
+          - flatpak/.flatpak-builder
+          - flatpak/build-dir
+          - flatpak/repo
+          - node_modules
+          - dist
+          - preview-dist
+          - src-tauri/target
+      - type: archive
+        url: https://registry.npmjs.org/pnpm/-/pnpm-10.34.8.tgz
+        sha256: 5be9fac9764583af5fa07015b9b0aa930ef634535df9fa6f464020d72b195630
+        dest: pnpm
+      - cargo-sources.json
+      - node-sources.json
