@@ -94,6 +94,11 @@
   </keywords>
 
   <releases>
+    <release version="0.4.4" date="2026-11-02">
+      <description>
+        <p>Dialogs and the details panel no longer flicker on WebKitGTK 2.54.</p>
+      </description>
+    </release>
     <release version="0.4.3" date="2026-11-02">
       <description>
         <p>Sheets, notifications and menus no longer flicker over the download list.</p>
