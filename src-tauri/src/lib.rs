@@ -6,6 +6,7 @@ mod engine;
 mod fdlimit;
 mod feeds;
 mod flatpak;
+mod graphics;
 mod seeding;
 mod supervisor;
 mod settings;
@@ -32,6 +33,8 @@ struct Tick {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before anything touches GTK, so the webview sees it.
+    graphics::settle_webkit();
     fdlimit::raise();
     activation::stash_launch_token();
 
