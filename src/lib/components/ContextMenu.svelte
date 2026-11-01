@@ -110,6 +110,7 @@
     background: var(--raised);
     box-shadow: var(--shadow-pop);
     animation: pop 110ms var(--ease);
+    will-change: transform;
   }
 
   button {

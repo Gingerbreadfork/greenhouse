@@ -441,8 +441,8 @@
     display: grid;
     place-items: center;
     padding: 20px;
-    background: color-mix(in srgb, var(--ground-sunk) 76%, transparent);
-    backdrop-filter: blur(2px);
+    background: color-mix(in srgb, var(--ground-sunk) 82%, transparent);
+    will-change: transform;
   }
 
   .drop-card {
@@ -477,5 +477,6 @@
     box-shadow: var(--shadow-pop);
     font-size: 12px;
     color: var(--ink-dim);
+    will-change: transform;
   }
 </style>

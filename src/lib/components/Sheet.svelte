@@ -102,9 +102,10 @@
     display: grid;
     place-items: center;
     padding: 40px 24px;
-    background: color-mix(in srgb, var(--ground-sunk) 72%, transparent);
-    backdrop-filter: blur(3px);
+    background: color-mix(in srgb, var(--ground-sunk) 78%, transparent);
     animation: fade 140ms var(--ease);
+    /* Own layer: the list keeps repainting underneath and must not drag the sheet with it. */
+    will-change: transform;
   }
 
   /* Programmatic focus target for the tab trap; it needs no ring. */

@@ -42,6 +42,8 @@
     width: min(330px, calc(100vw - 32px - var(--rail, 0px)));
     min-width: 220px;
     pointer-events: none;
+    /* Own layer, so progress bars tweening underneath never repaint the toasts. */
+    will-change: transform;
   }
 
   .toast {
