@@ -94,6 +94,11 @@
   </keywords>
 
   <releases>
+    <release version="0.4.3" date="2026-11-02">
+      <description>
+        <p>Sheets, notifications and menus no longer flicker over the download list.</p>
+      </description>
+    </release>
     <release version="0.4.2" date="2026-10-25">
       <description>
         <p>Greenhouse can be built and run as a Flatpak. In one, updates come from the store, and starting at login goes through the desktop's background portal.</p>
