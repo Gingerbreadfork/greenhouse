@@ -256,7 +256,7 @@
     {/if}
   </section>
 
-  {#if info.files.length > 1}
+  {#if info.files.length > 1 || info.skipped.length > 0}
     <section class="block">
       <div class="head">
         <h3>Files</h3>
