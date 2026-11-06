@@ -326,19 +326,20 @@ pub struct BlocklistStatus {
     pub active: bool,
     /// When the downloaded copy was last refreshed, in seconds since 1970.
     pub updated_at: Option<u64>,
+    /// When the copy the engine is using was downloaded. Older than
+    /// `updated_at` means a newer copy waits for the engine to restart.
+    pub loaded_at: Option<u64>,
     pub bytes: u64,
 }
 
 fn blocklist_status_of(state: &AppState) -> BlocklistStatus {
-    let meta = std::fs::metadata(state.paths.blocklist_file()).ok();
+    let file = state.paths.blocklist_file();
+    let running = state.engine.get();
     BlocklistStatus {
-        active: state.engine.get().blocklist_active,
-        updated_at: meta
-            .as_ref()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs()),
-        bytes: meta.map(|m| m.len()).unwrap_or(0),
+        active: running.blocklist_active,
+        updated_at: settings::modified_secs(&file),
+        loaded_at: running.blocklist_loaded,
+        bytes: std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0),
     }
 }
 
@@ -348,7 +349,7 @@ pub fn blocklist_status(state: tauri::State<'_, AppState>) -> BlocklistStatus {
 }
 
 /// Fetches the blocklist named in the settings into the copy the engine reads
-/// at launch. With no URL set, the copy is removed.
+/// when it starts. With no URL set, the copy is removed.
 pub async fn download_blocklist(state: &AppState) -> CmdResult<()> {
     let url = state.settings.read().blocklist_url.trim().to_string();
     let file = state.paths.blocklist_file();
@@ -1883,6 +1884,7 @@ mod tests {
                 session,
                 bound_interface: None,
                 blocklist_active: false,
+                blocklist_loaded: None,
                 warnings: vec![],
             },
             settings.clone(),
@@ -2328,6 +2330,7 @@ mod tests {
             session,
             bound_interface: Some(format!("port-{}", settings.listen_port)),
             blocklist_active: false,
+            blocklist_loaded: None,
             warnings: vec![],
         })
     }

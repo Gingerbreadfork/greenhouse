@@ -247,6 +247,12 @@ impl Paths {
     }
 }
 
+/// When a file was last changed, in seconds since 1970.
+pub fn modified_secs(path: &Path) -> Option<u64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    Some(modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs())
+}
+
 pub type PendingMoves = std::collections::HashMap<String, String>;
 
 pub fn load_pending_moves(path: &Path) -> PendingMoves {

@@ -228,16 +228,21 @@ fn spawn_ticker(app: tauri::AppHandle) {
     });
 }
 
-/// Keeps the downloaded blocklist no more than a day old.
+/// Keeps the downloaded blocklist no more than a day old. The engine reads it
+/// when it starts, so a new copy is used from the next restart.
 fn refresh_stale_blocklist(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let state = app.state::<AppState>();
-        let age = std::fs::metadata(state.paths.blocklist_file())
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.elapsed().ok());
-        if age.is_none_or(|a| a > Duration::from_secs(24 * 60 * 60)) {
-            let _ = commands::download_blocklist(&state).await;
+        let mut hourly = tokio::time::interval(Duration::from_secs(60 * 60));
+        loop {
+            hourly.tick().await;
+            let state = app.state::<AppState>();
+            let age = std::fs::metadata(state.paths.blocklist_file())
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok());
+            if age.is_none_or(|a| a > Duration::from_secs(24 * 60 * 60)) {
+                let _ = commands::download_blocklist(&state).await;
+            }
         }
     });
 }

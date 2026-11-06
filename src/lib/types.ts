@@ -201,6 +201,8 @@ export interface BlocklistStatus {
   active: boolean;
   /** Seconds since 1970, or null when nothing has been downloaded. */
   updated_at: number | null;
+  /** When the copy in use was downloaded; older than updated_at means a newer one waits. */
+  loaded_at: number | null;
   bytes: number;
 }
 

@@ -106,6 +106,8 @@ pub struct Engine {
     /// The interface traffic is tied to for this run, if any.
     pub bound_interface: Option<String>,
     pub blocklist_active: bool,
+    /// When the blocklist in use was downloaded, in seconds since 1970.
+    pub blocklist_loaded: Option<u64>,
     pub warnings: Vec<String>,
 }
 
@@ -115,6 +117,7 @@ pub struct Running {
     pub api: Api,
     pub bound_interface: Option<String>,
     pub blocklist_active: bool,
+    pub blocklist_loaded: Option<u64>,
     /// The settings this engine was built from, to fall back on.
     pub applied: Settings,
 }
@@ -126,6 +129,7 @@ impl Running {
             session: engine.session,
             bound_interface: engine.bound_interface,
             blocklist_active: engine.blocklist_active,
+            blocklist_loaded: engine.blocklist_loaded,
             applied,
         }
     }
@@ -227,6 +231,7 @@ async fn start_session(
 
 pub async fn build_session(paths: &Paths, settings: &Settings) -> Result<Engine> {
     let (bind_device_name, bind_warning) = bind_device(&settings.bind_interface);
+    let downloaded = crate::settings::modified_secs(&paths.blocklist_file());
     let (session, blocklist_active, blocklist_warning) = start_session(
         settings.download_dir.clone().into(),
         blocklist_source(paths, settings),
@@ -238,6 +243,7 @@ pub async fn build_session(paths: &Paths, settings: &Settings) -> Result<Engine>
         session,
         bound_interface: bind_device_name,
         blocklist_active,
+        blocklist_loaded: downloaded.filter(|_| blocklist_active),
         warnings: bind_warning.into_iter().chain(blocklist_warning).collect(),
     })
 }

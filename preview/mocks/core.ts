@@ -45,10 +45,15 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
     case 'open_folder':
       return undefined as T;
     case 'blocklist_status':
-      return { active: false, updated_at: null, bytes: 0 } as T;
+      return { active: false, updated_at: null, loaded_at: null, bytes: 0 } as T;
     case 'refresh_blocklist':
       await delay(900);
-      return { active: false, updated_at: Math.floor(Date.now() / 1000), bytes: 4_812_330 } as T;
+      return {
+        active: false,
+        updated_at: Math.floor(Date.now() / 1000),
+        loaded_at: null,
+        bytes: 4_812_330
+      } as T;
     case 'quit':
       return undefined as T;
     case 'restart_engine':

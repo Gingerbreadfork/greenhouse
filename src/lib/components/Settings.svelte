@@ -61,9 +61,10 @@
     if (!settings.blocklist_url) return 'The address of a P2P-format list, plain or gzipped.';
     if (!blocklist?.updated_at) return 'Not downloaded yet.';
     const when = new Date(blocklist.updated_at * 1000).toLocaleDateString();
-    return blocklist.active
-      ? `In use. Updated ${when}, ${bytes(blocklist.bytes)}.`
-      : `Downloaded ${when}. Apply the network settings to start using it.`;
+    if (!blocklist.active) return `Downloaded ${when}. Apply the network settings to start using it.`;
+    if ((blocklist.loaded_at ?? 0) < blocklist.updated_at)
+      return `Updated ${when}. Apply the network settings to start using the new copy.`;
+    return `In use. Updated ${when}, ${bytes(blocklist.bytes)}.`;
   });
 
   async function updateBlocklist() {
