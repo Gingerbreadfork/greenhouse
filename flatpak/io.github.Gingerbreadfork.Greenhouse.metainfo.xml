@@ -94,6 +94,11 @@
   </keywords>
 
   <releases>
+    <release version="0.4.5" date="2026-11-07">
+      <description>
+        <p>Tracker changes now last through a restart and can remove a torrent's own trackers. Finished downloads that cannot be moved are no longer left split between folders, torrents with the same name get separate incomplete folders, and the queue picks up where it left off after a relaunch. Several torrent files can be opened at once, and a torrent made only of skipped file types is no longer downloaded in full.</p>
+      </description>
+    </release>
     <release version="0.4.4" date="2026-11-02">
       <description>
         <p>Dialogs and the details panel no longer flicker on WebKitGTK 2.54.</p>
