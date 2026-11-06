@@ -231,6 +231,11 @@ impl Paths {
         self.data_dir.join("queued.json")
     }
 
+    /// Torrents the queue paused, as opposed to ones you paused.
+    pub fn queue_paused_file(&self) -> PathBuf {
+        self.data_dir.join("queue-paused.json")
+    }
+
     /// Running upload and seeding-time totals for each torrent.
     pub fn seeding_file(&self) -> PathBuf {
         self.data_dir.join("seeding.json")

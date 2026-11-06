@@ -16,6 +16,7 @@ use crate::engine::{self, SessionSummary, TorrentDetail, TorrentRow};
 use crate::feeds::{self, FeedStatus, FeedsState};
 use crate::seeding::SeedLedger;
 use crate::stream::StreamServer;
+use crate::supervisor::QueueHolds;
 use crate::settings::{self, Paths, Settings};
 use crate::torrentsrc;
 
@@ -31,7 +32,7 @@ pub struct AppState {
     pub seeding: Mutex<SeedLedger>,
     pub feeds: Mutex<FeedsState>,
     /// Torrents the queue paused, so ones you paused yourself are left alone.
-    pub queue_paused: Mutex<HashSet<String>>,
+    pub queue_paused: Mutex<QueueHolds>,
     pub activity: Mutex<ActivityLog>,
     /// Serves files to a media player while they download.
     pub stream: Option<StreamServer>,
@@ -1895,7 +1896,7 @@ mod tests {
             resolving: Mutex::new(HashMap::new()),
             seeding: Mutex::new(SeedLedger::default()),
             feeds: Mutex::new(FeedsState::default()),
-            queue_paused: Mutex::new(HashSet::new()),
+            queue_paused: Mutex::new(QueueHolds::load(root.join("queue-paused.json"))),
             activity: Mutex::new(ActivityLog::load(root.join("activity.json"))),
             stream: None,
             startup_warnings: vec![],

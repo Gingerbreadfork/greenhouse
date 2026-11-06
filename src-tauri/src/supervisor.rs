@@ -10,6 +10,60 @@ use crate::commands::{forget_inner, restore_inner, AppState, RestoreToken};
 use crate::engine::TorrentRow;
 use crate::settings::{self, MoveFailed};
 
+/// Torrents the queue paused, kept on disk so they are still the queue's to
+/// start after a restart. Ones you paused yourself are never in here.
+pub struct QueueHolds {
+    held: HashSet<String>,
+    file: PathBuf,
+}
+
+impl QueueHolds {
+    pub fn load(file: PathBuf) -> Self {
+        let held = std::fs::read(&file)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        Self { held, file }
+    }
+
+    pub fn contains(&self, info_hash: &str) -> bool {
+        self.held.contains(info_hash)
+    }
+
+    pub fn insert(&mut self, info_hash: String) {
+        if self.held.insert(info_hash) {
+            self.save();
+        }
+    }
+
+    pub fn remove(&mut self, info_hash: &str) {
+        if self.held.remove(info_hash) {
+            self.save();
+        }
+    }
+
+    pub fn clear(&mut self) {
+        if !self.held.is_empty() {
+            self.held.clear();
+            self.save();
+        }
+    }
+
+    fn retain(&mut self, live: &HashSet<&str>) {
+        let before = self.held.len();
+        self.held.retain(|h| live.contains(h.as_str()));
+        if self.held.len() != before {
+            self.save();
+        }
+    }
+
+    fn save(&self) {
+        if let Ok(json) = serde_json::to_vec(&self.held) {
+            let _ = std::fs::write(&self.file, json);
+        }
+    }
+}
+
 /// Background housekeeping that runs on the same clock as the UI tick:
 /// queue limits, moving finished downloads out of the incomplete folder, and
 /// telling you when something is done.
@@ -36,6 +90,7 @@ impl Supervisor {
             }
             let live: HashSet<&str> = rows.iter().map(|r| r.info_hash.as_str()).collect();
             state.seeding.lock().retain(&live);
+            state.queue_paused.lock().retain(&live);
         }
 
         self.announce_finished(app, state, rows);
@@ -273,4 +328,27 @@ fn report_failed_move(app: &AppHandle, name: &str, note: String, body: String) {
         .title("Could not move a finished download")
         .body(body)
         .show();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queue_holds_last_between_runs() {
+        let file = std::env::temp_dir().join(format!("gh-holds-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&file);
+        let mut holds = QueueHolds::load(file.clone());
+        holds.insert("aaa".into());
+        holds.insert("bbb".into());
+        holds.remove("bbb");
+
+        let mut again = QueueHolds::load(file.clone());
+        assert!(again.contains("aaa"));
+        assert!(!again.contains("bbb"));
+
+        again.retain(&HashSet::new());
+        assert!(!QueueHolds::load(file.clone()).contains("aaa"));
+        std::fs::remove_file(&file).ok();
+    }
 }

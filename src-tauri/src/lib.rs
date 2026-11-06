@@ -14,7 +14,7 @@ mod stream;
 mod torrentsrc;
 mod watch;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -104,6 +104,7 @@ pub fn run() {
             let feeds = feeds::FeedsState::load(&paths.feeds_file());
             let activity = activity::ActivityLog::load(paths.activity_file());
             let stream = tauri::async_runtime::block_on(stream::start(engine.clone())).ok();
+            let queue_paused = supervisor::QueueHolds::load(paths.queue_paused_file());
 
             app.manage(AppState {
                 engine,
@@ -114,7 +115,7 @@ pub fn run() {
                 resolving: Mutex::new(HashMap::new()),
                 seeding: Mutex::new(seeding),
                 feeds: Mutex::new(feeds),
-                queue_paused: Mutex::new(HashSet::new()),
+                queue_paused: Mutex::new(queue_paused),
                 activity: Mutex::new(activity),
                 stream,
                 startup_warnings,
