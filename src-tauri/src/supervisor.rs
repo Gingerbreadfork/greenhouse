@@ -266,26 +266,25 @@ impl Supervisor {
         }
     }
 
-    async fn enforce_queue(&mut self, state: &AppState, rows: &[TorrentRow]) {
+    pub(crate) async fn enforce_queue(&mut self, state: &AppState, rows: &[TorrentRow]) {
+        // No limit still starts whatever an earlier limit was holding back.
         let (max_down, max_seed) = {
             let settings = state.settings.read();
-            (settings.max_active_downloads, settings.max_active_seeds)
+            let limit = |max: u32| if max == 0 { usize::MAX } else { max as usize };
+            (limit(settings.max_active_downloads), limit(settings.max_active_seeds))
         };
 
-        if max_down > 0 {
-            let candidates: Vec<&TorrentRow> = rows
-                .iter()
-                .filter(|r| !r.finished && r.state != "error" && self.is_candidate(state, r))
-                .collect();
-            self.apply_limit(state, &candidates, max_down as usize).await;
-        }
-        if max_seed > 0 {
-            let candidates: Vec<&TorrentRow> = rows
-                .iter()
-                .filter(|r| r.finished && r.state != "error" && self.is_candidate(state, r))
-                .collect();
-            self.apply_limit(state, &candidates, max_seed as usize).await;
-        }
+        let downloads: Vec<&TorrentRow> = rows
+            .iter()
+            .filter(|r| !r.finished && r.state != "error" && self.is_candidate(state, r))
+            .collect();
+        self.apply_limit(state, &downloads, max_down).await;
+
+        let seeds: Vec<&TorrentRow> = rows
+            .iter()
+            .filter(|r| r.finished && r.state != "error" && self.is_candidate(state, r))
+            .collect();
+        self.apply_limit(state, &seeds, max_seed).await;
     }
 
     /// A torrent belongs to the queue if it is running, or if the queue is the

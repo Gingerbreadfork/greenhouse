@@ -2606,6 +2606,45 @@ mod tests {
         });
     }
 
+    /// Taking the download limit away starts what the queue was holding, and
+    /// leaves alone what you paused yourself.
+    #[test]
+    fn the_queue_lets_go_when_its_limit_is_removed() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("unlimited", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            state.settings.write().start_paused = true;
+            let held = make_torrent(&root.join("one"), "Held", b"first", &[]).await;
+            let mine = make_torrent(&root.join("two"), "Mine", b"second", &[]).await;
+            let held = add_file_with_defaults(&state, "one".into(), held).await.unwrap().id.unwrap();
+            let mine = add_file_with_defaults(&state, "two".into(), mine).await.unwrap().id.unwrap();
+            let hash = state.session().get(held.into()).unwrap().info_hash().as_string();
+            state.queue_paused.lock().insert(hash.clone());
+
+            let state_of = |id: usize| {
+                engine::collect_rows(&state.session()).into_iter().find(|r| r.id == id).unwrap().state
+            };
+            // Both check their files before they settle as paused.
+            for _ in 0..100 {
+                if state_of(held) == "paused" && state_of(mine) == "paused" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+
+            let rows = engine::collect_rows(&state.session());
+            crate::supervisor::Supervisor::default().enforce_queue(&state, &rows).await;
+
+            assert_ne!(state_of(held), "paused");
+            assert_eq!(state_of(mine), "paused");
+            assert!(!state.queue_paused.lock().contains(&hash));
+        });
+    }
+
     /// A .torrent file in the watch folder is added once, and one that cannot
     /// be read is set aside instead of being retried forever.
     #[test]
