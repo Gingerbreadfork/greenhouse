@@ -1404,10 +1404,15 @@ fn explicit_output_folder(base: &str, staged: &Staged) -> String {
 }
 
 /// Inside the incomplete folder every torrent gets its own sub-folder, so the
-/// whole lot can be moved in one go when it finishes.
+/// whole lot can be moved in one go when it finishes. The info hash keeps two
+/// torrents with the same name apart.
 fn staging_folder(base: &str, staged: &Staged) -> String {
+    let name = safe_name(staged).unwrap_or_else(|| "torrent".into());
     let mut path = PathBuf::from(base.trim());
-    path.push(safe_name(staged).unwrap_or_else(|| "torrent".into()));
+    path.push(match staged.info_hash.as_deref() {
+        Some(hash) => format!("{name} ({})", hash.get(..8).unwrap_or(hash)),
+        None => name,
+    });
     path.to_string_lossy().into_owned()
 }
 
@@ -2512,6 +2517,33 @@ mod tests {
             };
             assert!(error.contains("skip"), "{error}");
             assert!(engine::collect_rows(&state.session()).is_empty());
+        });
+    }
+
+    /// Two torrents with the same name download into separate folders.
+    #[test]
+    fn same_named_torrents_do_not_share_an_incomplete_folder() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("same-name", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            {
+                let mut settings = state.settings.write();
+                settings.start_paused = true;
+                settings.incomplete_dir = root.join("partial").to_string_lossy().into_owned();
+            }
+            let one = make_torrent(&root.join("one"), "Release", b"first", &[]).await;
+            let two = make_torrent(&root.join("two"), "Release", b"second", &[]).await;
+            add_file_with_defaults(&state, "one".into(), one).await.unwrap();
+            add_file_with_defaults(&state, "two".into(), two).await.unwrap();
+
+            let rows = engine::collect_rows(&state.session());
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0].name, rows[1].name);
+            assert_ne!(rows[0].output_folder, rows[1].output_folder);
         });
     }
 
