@@ -8,7 +8,7 @@ use tauri_plugin_notification::NotificationExt;
 use crate::activity;
 use crate::commands::{forget_inner, restore_inner, AppState, RestoreToken};
 use crate::engine::TorrentRow;
-use crate::settings;
+use crate::settings::{self, MoveFailed};
 
 /// Background housekeeping that runs on the same clock as the UI tick:
 /// queue limits, moving finished downloads out of the incomplete folder, and
@@ -19,6 +19,8 @@ pub struct Supervisor {
     announced: HashSet<String>,
     /// Torrents currently being moved, so a slow move is not started twice.
     moving: HashSet<String>,
+    /// Moved torrents that could not be put back yet, with their names.
+    detached: Vec<(String, RestoreToken)>,
     started: bool,
     last_tick: Option<Instant>,
     last_saved: Option<Instant>,
@@ -37,6 +39,7 @@ impl Supervisor {
         }
 
         self.announce_finished(app, state, rows);
+        self.reattach(app, state).await;
         self.move_finished(app, state, rows).await;
         self.track_seeding(state, rows);
         self.enforce_seed_limits(app, state, rows).await;
@@ -146,39 +149,58 @@ impl Supervisor {
                 move || settings::move_contents(&from, &to)
             })
             .await
-            .unwrap_or_else(|e| Err(anyhow::anyhow!("{e}")));
+            .unwrap_or_else(|e| Err(MoveFailed::Stayed(anyhow::anyhow!("{e}"))));
 
-            let landed = match moved {
+            let restore = match moved {
                 Ok(()) => {
                     let place = to.to_string_lossy().into_owned();
                     activity::record(app, "moved", row.name.clone(), Some(format!("Moved to {place}")));
-                    place
+                    RestoreToken {
+                        output_folder: place,
+                        ..token
+                    }
                 }
-                Err(e) => {
+                Err(MoveFailed::Stayed(e)) => {
                     let why = format!("Could not be moved to {}: {e}", to.display());
-                    activity::record(app, "failed", row.name.clone(), Some(why));
-                    let _ = app
-                        .notification()
-                        .builder()
-                        .title("Could not move a finished download")
-                        .body(format!("{} stayed where it was: {e}", row.name))
-                        .show();
-                    token.output_folder.clone()
+                    report_failed_move(app, &row.name, why, format!("{} stayed where it was: {e}", row.name));
+                    token
+                }
+                // Left paused so it does not download again what was moved.
+                Err(MoveFailed::Split(e)) => {
+                    let why = format!(
+                        "Only part of it reached {}, the rest is still in {}: {e}",
+                        to.display(),
+                        from.display()
+                    );
+                    report_failed_move(app, &row.name, why.clone(), format!("{}: {why}", row.name));
+                    RestoreToken {
+                        paused: true,
+                        ..token
+                    }
                 }
             };
 
-            let _ = restore_inner(
-                state,
-                RestoreToken {
-                    output_folder: landed,
-                    ..token
-                },
-            )
-            .await;
-
             self.clear_pending(state, &row.info_hash);
             self.moving.remove(&row.info_hash);
+            if let Err(e) = restore_inner(state, restore.clone()).await {
+                let why = format!("Could not be put back in the list, trying again: {e}");
+                activity::record(app, "failed", row.name.clone(), Some(why));
+                self.detached.push((row.name.clone(), restore));
+            }
         }
+    }
+
+    /// Retries torrents that were moved but could not be put back.
+    async fn reattach(&mut self, app: &AppHandle, state: &AppState) {
+        let mut waiting = Vec::new();
+        for (name, token) in std::mem::take(&mut self.detached) {
+            if restore_inner(state, token.clone()).await.is_ok() {
+                activity::record(app, "moved", name, Some("Back in the list".into()));
+            } else {
+                waiting.push((name, token));
+            }
+        }
+        self.detached = waiting;
     }
 
     fn clear_pending(&self, state: &AppState, info_hash: &str) {
@@ -241,4 +263,14 @@ impl Supervisor {
             }
         }
     }
+}
+
+fn report_failed_move(app: &AppHandle, name: &str, note: String, body: String) {
+    activity::record(app, "failed", name.to_string(), Some(note));
+    let _ = app
+        .notification()
+        .builder()
+        .title("Could not move a finished download")
+        .body(body)
+        .show();
 }

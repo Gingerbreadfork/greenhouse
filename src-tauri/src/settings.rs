@@ -257,24 +257,73 @@ pub fn save_pending_moves(path: &Path, moves: &PendingMoves) {
     }
 }
 
+/// Why a move did not finish.
+#[derive(Debug)]
+pub enum MoveFailed {
+    /// Everything is back where it started.
+    Stayed(anyhow::Error),
+    /// Some entries reached the destination and could not be put back.
+    Split(anyhow::Error),
+}
+
 /// Moves everything inside `from` into `to`, falling back to copy-and-delete
-/// when the two are on different filesystems.
-pub fn move_contents(from: &Path, to: &Path) -> Result<()> {
-    std::fs::create_dir_all(to)?;
-    for entry in std::fs::read_dir(from)? {
-        let entry = entry?;
-        let target = to.join(entry.file_name());
-        if std::fs::rename(entry.path(), &target).is_err() {
-            copy_recursive(&entry.path(), &target)?;
-            if entry.path().is_dir() {
-                std::fs::remove_dir_all(entry.path())?;
-            } else {
-                std::fs::remove_file(entry.path())?;
+/// when the two are on different filesystems. When one entry fails, the ones
+/// already moved are put back.
+pub fn move_contents(from: &Path, to: &Path) -> std::result::Result<(), MoveFailed> {
+    let mut moved = Vec::new();
+    match move_each(from, to, &mut moved) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir(from);
+            Ok(())
+        }
+        Err(e) => {
+            let mut undone = true;
+            for (source, target, merged) in moved.iter().rev() {
+                undone &= !merged && move_entry(target, source).is_ok();
             }
+            Err(if undone { MoveFailed::Stayed(e) } else { MoveFailed::Split(e) })
         }
     }
-    let _ = std::fs::remove_dir(from);
+}
+
+/// Moves each entry, noting where it went and whether it was merged into a
+/// folder already there, which cannot be undone without taking that along.
+fn move_each(from: &Path, to: &Path, moved: &mut Vec<(PathBuf, PathBuf, bool)>) -> Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let source = entry?.path();
+        let target = to.join(source.file_name().unwrap_or_default());
+        if std::fs::rename(&source, &target).is_ok() {
+            moved.push((source, target, false));
+            continue;
+        }
+        let existed = target.exists();
+        if let Err(e) = copy_recursive(&source, &target) {
+            if !existed {
+                let _ = remove_entry(&target);
+            }
+            return Err(e);
+        }
+        moved.push((source.clone(), target.clone(), target.is_dir() && existed));
+        remove_entry(&source)?;
+    }
     Ok(())
+}
+
+fn move_entry(source: &Path, target: &Path) -> Result<()> {
+    if std::fs::rename(source, target).is_err() {
+        copy_recursive(source, target)?;
+        remove_entry(source)?;
+    }
+    Ok(())
+}
+
+fn remove_entry(path: &Path) -> std::io::Result<()> {
+    if path.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    }
 }
 
 fn copy_recursive(from: &Path, to: &Path) -> Result<()> {
@@ -449,6 +498,30 @@ mod tests {
         assert_eq!(std::fs::read(to.join("a.bin")).unwrap(), b"one");
         assert_eq!(std::fs::read(to.join("sub/b.bin")).unwrap(), b"two");
         assert!(!from.exists(), "the staging folder should be cleaned up");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_failed_move_puts_back_what_it_moved() {
+        let root = std::env::temp_dir().join(format!("gh-move-fail-{}", std::process::id()));
+        let from = root.join("incomplete/Some Release");
+        let to = root.join("done/Some Release");
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        for name in ["a.bin", "b.bin", "c.bin"] {
+            std::fs::write(from.join(name), name).unwrap();
+        }
+        // A file cannot replace a folder that has something in it.
+        std::fs::create_dir_all(to.join("b.bin/inside")).unwrap();
+
+        let outcome = move_contents(&from, &to);
+
+        assert!(matches!(outcome, Err(MoveFailed::Stayed(_))), "{outcome:?}");
+        for name in ["a.bin", "b.bin", "c.bin"] {
+            assert_eq!(std::fs::read(from.join(name)).unwrap(), name.as_bytes());
+        }
+        assert!(!to.join("a.bin").exists());
+        assert!(!to.join("c.bin").exists());
         std::fs::remove_dir_all(&root).ok();
     }
 }
