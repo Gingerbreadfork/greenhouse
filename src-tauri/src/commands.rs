@@ -1318,7 +1318,17 @@ async fn commit_resolved(
         )
     };
 
-    let add = match &staged.bytes {
+    let (bytes, extra_trackers) = match &staged.bytes {
+        Some(bytes) => {
+            let all = torrentsrc::merge_trackers(&[&torrentsrc::announced(bytes), &trackers]);
+            match announcing(bytes, &all) {
+                Some(rewritten) => (Some(rewritten), Vec::new()),
+                None => (Some(bytes.clone()), trackers.clone()),
+            }
+        }
+        None => (None, trackers.clone()),
+    };
+    let add = match &bytes {
         Some(bytes) => AddTorrent::from_bytes(bytes.clone()),
         None => AddTorrent::from_url(staged.source.clone()),
     };
@@ -1330,11 +1340,7 @@ async fn commit_resolved(
             .selected_files
             .clone()
             .filter(|f| f.len() != staged.files.len()),
-        trackers: if trackers.is_empty() {
-            None
-        } else {
-            Some(trackers.clone())
-        },
+        trackers: (!extra_trackers.is_empty()).then_some(extra_trackers),
         ..Default::default()
     };
 
@@ -1350,7 +1356,7 @@ async fn commit_resolved(
     };
 
     let info_hash = handle.info_hash().as_string();
-    if let Some(bytes) = &staged.bytes {
+    if let Some(bytes) = bytes.as_ref().filter(|_| !already) {
         let path = state.paths.source_file(&info_hash);
         let _ = tokio::fs::write(path, bytes).await;
     }
@@ -1414,6 +1420,16 @@ fn staging_folder(base: &str, staged: &Staged) -> String {
         None => name,
     });
     path.to_string_lossy().into_owned()
+}
+
+/// The torrent file rewritten to announce to exactly `trackers`. The engine
+/// only adds to a file's own list, and after a restart it reloads the file
+/// alone, so trackers must be written into it to be removed or to last.
+fn announcing(bytes: &Bytes, trackers: &[String]) -> Option<Bytes> {
+    if torrentsrc::announced(bytes) == trackers {
+        return Some(bytes.clone());
+    }
+    torrentsrc::with_trackers(bytes, trackers).map(Bytes::from)
 }
 
 // ------------------------------------------------------- tracker plumbing
@@ -1500,7 +1516,6 @@ async fn apply_trackers_inner(
     } else {
         torrentsrc::merge_trackers(&[&existing, &trackers])
     };
-    let added = merged.len().saturating_sub(existing.len());
 
     let bytes: Option<Bytes> = handle
         .metadata
@@ -1519,43 +1534,21 @@ async fn apply_trackers_inner(
         .await
         .map_err(|e| format!("could not detach the torrent: {e}"))?;
 
-    let add = match &bytes {
-        Some(b) => AddTorrent::from_bytes(b.clone()),
-        None => AddTorrent::from_url(magnet_for(&info_hash, name.as_deref(), &merged)),
-    };
-    let opts = AddTorrentOptions {
+    let opts = || AddTorrentOptions {
         paused,
         overwrite: true,
         output_folder: Some(output_folder.clone()),
         only_files: only_files.clone(),
-        trackers: Some(merged.clone()),
         ..Default::default()
     };
+    let (hash, name, bytes) = (&info_hash, name.as_deref(), bytes.as_ref());
 
-    let response = match state.session().add_torrent(add, Some(opts)).await {
-        Ok(response) => response,
+    let handle = match attach(state, hash, name, bytes, &merged, opts()).await {
+        Ok((_, handle)) => handle,
         Err(e) => {
             // Re-attaching failed, so put the torrent back as it was rather
             // than leaving it detached from the session.
-            let rollback = match &bytes {
-                Some(b) => AddTorrent::from_bytes(b.clone()),
-                None => AddTorrent::from_url(magnet_for(&info_hash, name.as_deref(), &existing)),
-            };
-            let restored = state
-                .session()
-                .add_torrent(
-                    rollback,
-                    Some(AddTorrentOptions {
-                        paused,
-                        overwrite: true,
-                        output_folder: Some(output_folder.clone()),
-                        only_files: only_files.clone(),
-                        trackers: Some(existing.clone()),
-                        ..Default::default()
-                    }),
-                )
-                .await
-                .is_ok();
+            let restored = attach(state, hash, name, bytes, &existing, opts()).await.is_ok();
             return Err(if restored {
                 format!("Could not add those trackers, so the torrent was left as it was: {e}")
             } else {
@@ -1563,16 +1556,41 @@ async fn apply_trackers_inner(
             });
         }
     };
-    let new_id = match response {
-        AddTorrentResponse::Added(id, _) | AddTorrentResponse::AlreadyManaged(id, _) => id,
-        AddTorrentResponse::ListOnly(_) => return Err("engine returned no torrent".into()),
-    };
 
+    let tracker_count = handle.shared().trackers.len();
     Ok(ApplyTrackersResult {
-        id: new_id,
-        tracker_count: merged.len(),
-        added,
+        id: handle.id(),
+        tracker_count,
+        added: tracker_count.saturating_sub(existing.len()),
     })
+}
+
+/// Adds a torrent that announces to exactly `trackers`, from its file when
+/// there is one and from a magnet link otherwise.
+async fn attach(
+    state: &AppState,
+    info_hash: &str,
+    name: Option<&str>,
+    bytes: Option<&Bytes>,
+    trackers: &[String],
+    mut opts: AddTorrentOptions,
+) -> Result<(usize, Arc<librqbit::ManagedTorrent>), String> {
+    let add = match bytes {
+        Some(bytes) => match announcing(bytes, trackers) {
+            Some(rewritten) => AddTorrent::from_bytes(rewritten),
+            None => {
+                opts.trackers = Some(trackers.to_vec());
+                AddTorrent::from_bytes(bytes.clone())
+            }
+        },
+        None => AddTorrent::from_url(magnet_for(info_hash, name, trackers)),
+    };
+    match state.session().add_torrent(add, Some(opts)).await.map_err(err)? {
+        AddTorrentResponse::Added(id, handle) | AddTorrentResponse::AlreadyManaged(id, handle) => {
+            Ok((id, handle))
+        }
+        AddTorrentResponse::ListOnly(_) => Err("engine returned no torrent".into()),
+    }
 }
 
 fn magnet_for(info_hash: &str, name: Option<&str>, trackers: &[String]) -> String {
@@ -1733,33 +1751,24 @@ pub async fn restore_torrent(
 pub async fn restore_inner(state: &AppState, token: RestoreToken) -> CmdResult<usize> {
     let source = state.paths.source_file(&token.info_hash);
     let bytes = tokio::fs::read(&source).await.ok().map(Bytes::from);
-    let add = match &bytes {
-        Some(b) => AddTorrent::from_bytes(b.clone()),
-        None => AddTorrent::from_url(magnet_for(
-            &token.info_hash,
-            token.name.as_deref(),
-            &token.trackers,
-        )),
+    let opts = AddTorrentOptions {
+        paused: token.paused,
+        overwrite: true,
+        output_folder: Some(token.output_folder.clone()),
+        only_files: token.only_files.clone(),
+        ..Default::default()
     };
-    let response = state
-        .session()
-        .add_torrent(
-            add,
-            Some(AddTorrentOptions {
-                paused: token.paused,
-                overwrite: true,
-                output_folder: Some(token.output_folder.clone()),
-                only_files: token.only_files.clone(),
-                trackers: Some(token.trackers.clone()),
-                ..Default::default()
-            }),
-        )
-        .await
-        .map_err(|e| format!("could not put the torrent back: {e}"))?;
-    match response {
-        AddTorrentResponse::Added(id, _) | AddTorrentResponse::AlreadyManaged(id, _) => Ok(id),
-        AddTorrentResponse::ListOnly(_) => Err("engine returned no torrent".into()),
-    }
+    attach(
+        state,
+        &token.info_hash,
+        token.name.as_deref(),
+        bytes.as_ref(),
+        &token.trackers,
+        opts,
+    )
+    .await
+    .map(|(id, _)| id)
+    .map_err(|e| format!("could not put the torrent back: {e}"))
 }
 
 #[cfg(test)]
@@ -2544,6 +2553,55 @@ mod tests {
             assert_eq!(rows.len(), 2);
             assert_eq!(rows[0].name, rows[1].name);
             assert_ne!(rows[0].output_folder, rows[1].output_folder);
+        });
+    }
+
+    fn trackers_of(state: &AppState, id: usize) -> Vec<String> {
+        let handle = state.session().get(id.into()).unwrap();
+        let mut list: Vec<String> = handle.shared().trackers.iter().map(|u| u.to_string()).collect();
+        list.sort();
+        list
+    }
+
+    /// Trackers added to a torrent file survive a restart, and ones the file
+    /// came with can be removed.
+    #[test]
+    fn trackers_can_be_removed_and_survive_a_restart() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("tracker-file", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let build = |settings: Settings| persistent_engine(root.clone(), settings);
+            restart_engine_with(app.handle(), &state, build).await.unwrap();
+
+            let own = "udp://own.example:1/announce";
+            let pack = "udp://pack.example:2/announce";
+            let fresh = "udp://fresh.example:3/announce";
+            {
+                let mut settings = state.settings.write();
+                settings.start_paused = true;
+                settings.packs = vec![settings::TrackerPack {
+                    enabled: true,
+                    trackers: vec![pack.into()],
+                    ..Default::default()
+                }];
+            }
+            let torrent = make_torrent(&root, "payload", b"some bytes", &[own]).await;
+            let id = add_file_with_defaults(&state, "a".into(), torrent).await.unwrap().id.unwrap();
+            assert_eq!(trackers_of(&state, id), vec![own, pack]);
+
+            restart_engine_with(app.handle(), &state, build).await.unwrap();
+            assert_eq!(trackers_of(&state, id), vec![own, pack]);
+
+            let applied = apply_trackers_inner(&state, id, vec![fresh.into()], true).await.unwrap();
+            assert_eq!(applied.tracker_count, 1);
+            assert_eq!(trackers_of(&state, applied.id), vec![fresh]);
+
+            restart_engine_with(app.handle(), &state, build).await.unwrap();
+            assert_eq!(trackers_of(&state, applied.id), vec![fresh]);
         });
     }
 

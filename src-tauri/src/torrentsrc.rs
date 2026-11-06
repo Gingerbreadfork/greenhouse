@@ -107,6 +107,107 @@ pub fn merge_trackers(lists: &[&[String]]) -> Vec<String> {
     out
 }
 
+/// The trackers a torrent file announces to, in order, without repeats.
+pub fn announced(torrent: &[u8]) -> Vec<String> {
+    let Ok(meta) = librqbit::torrent_from_bytes(torrent) else {
+        return Vec::new();
+    };
+    let list: Vec<String> = meta
+        .iter_announce()
+        .filter_map(|t| std::str::from_utf8(t.as_ref()).ok().map(str::to_string))
+        .collect();
+    merge_trackers(&[&list])
+}
+
+/// The .torrent with its announce list replaced by `trackers`, one per tier.
+/// Everything else, the info dictionary included, is copied byte for byte so
+/// the info hash stays the same. None when the bytes are not a torrent file.
+pub fn with_trackers(torrent: &[u8], trackers: &[String]) -> Option<Vec<u8>> {
+    let mut entries: Vec<(&[u8], Vec<u8>)> = top_level_entries(torrent)?
+        .into_iter()
+        .filter(|(key, _)| *key != b"announce" && *key != b"announce-list")
+        .map(|(key, value)| (key, value.to_vec()))
+        .collect();
+    if let Some(first) = trackers.first() {
+        entries.push((b"announce", bencode_string(first.as_bytes())));
+        let mut tiers = b"l".to_vec();
+        for t in trackers {
+            tiers.push(b'l');
+            tiers.extend(bencode_string(t.as_bytes()));
+            tiers.push(b'e');
+        }
+        tiers.push(b'e');
+        entries.push((b"announce-list", tiers));
+    }
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+
+    let mut out = b"d".to_vec();
+    for (key, value) in entries {
+        out.extend(bencode_string(key));
+        out.extend(value);
+    }
+    out.push(b'e');
+    Some(out)
+}
+
+fn bencode_string(s: &[u8]) -> Vec<u8> {
+    let mut out = format!("{}:", s.len()).into_bytes();
+    out.extend_from_slice(s);
+    out
+}
+
+/// The keys of a bencoded dictionary with the raw bytes of each value.
+fn top_level_entries(data: &[u8]) -> Option<Vec<(&[u8], &[u8])>> {
+    if data.first() != Some(&b'd') {
+        return None;
+    }
+    let mut pos = 1;
+    let mut entries = Vec::new();
+    while *data.get(pos)? != b'e' {
+        let (key, after_key) = bencode_bytes(data, pos)?;
+        let end = skip_value(data, after_key, 0)?;
+        entries.push((key, &data[after_key..end]));
+        pos = end;
+    }
+    (pos + 1 == data.len()).then_some(entries)
+}
+
+/// A byte string starting at `pos`, and where it ends.
+fn bencode_bytes(data: &[u8], pos: usize) -> Option<(&[u8], usize)> {
+    let colon = pos + data.get(pos..)?.iter().position(|&b| b == b':')?;
+    let len: usize = std::str::from_utf8(&data[pos..colon]).ok()?.parse().ok()?;
+    let start = colon + 1;
+    let end = start.checked_add(len)?;
+    Some((data.get(start..end)?, end))
+}
+
+/// Where the bencoded value starting at `pos` ends.
+fn skip_value(data: &[u8], pos: usize, depth: usize) -> Option<usize> {
+    if depth > 64 {
+        return None;
+    }
+    match *data.get(pos)? {
+        b'i' => Some(pos + data.get(pos..)?.iter().position(|&b| b == b'e')? + 1),
+        b'0'..=b'9' => bencode_bytes(data, pos).map(|(_, end)| end),
+        b'l' => {
+            let mut pos = pos + 1;
+            while *data.get(pos)? != b'e' {
+                pos = skip_value(data, pos, depth + 1)?;
+            }
+            Some(pos + 1)
+        }
+        b'd' => {
+            let mut pos = pos + 1;
+            while *data.get(pos)? != b'e' {
+                let (_, after_key) = bencode_bytes(data, pos)?;
+                pos = skip_value(data, after_key, depth + 1)?;
+            }
+            Some(pos + 1)
+        }
+        _ => None,
+    }
+}
+
 /// Is this string something we can hand to the engine as a torrent source?
 pub fn looks_like_source(s: &str) -> bool {
     let s = s.trim();
@@ -141,6 +242,35 @@ mod tests {
             "udp://a:1/announce\n\n# comment\nudp://A:1/announce\nnot-a-url\nhttps://b/announce",
         );
         assert_eq!(list, vec!["udp://a:1/announce", "https://b/announce"]);
+    }
+
+    #[test]
+    fn trackers_are_replaced_without_touching_the_info_hash() {
+        let original = b"d8:announce18:udp://a:1/announce13:announce-listll18:udp://a:1/announceee\
+            7:comment2:hi4:infod6:lengthi1e4:name1:a12:piece lengthi16384e\
+            6:pieces20:AAAAAAAAAAAAAAAAAAAAee";
+        let hash = |bytes: &[u8]| librqbit::torrent_from_bytes(bytes).unwrap().info_hash;
+        let announced = |bytes: &[u8]| -> Vec<String> {
+            librqbit::torrent_from_bytes(bytes)
+                .unwrap()
+                .iter_announce()
+                .map(|t| String::from_utf8_lossy(t.as_ref()).into_owned())
+                .collect()
+        };
+
+        let wanted = vec!["udp://b:2/announce".to_string(), "https://c/announce".to_string()];
+        let rewritten = with_trackers(original, &wanted).unwrap();
+        assert_eq!(hash(&rewritten), hash(original));
+        assert!(!announced(&rewritten).contains(&"udp://a:1/announce".to_string()));
+        assert!(announced(&rewritten).contains(&"https://c/announce".to_string()));
+        assert!(rewritten.windows(9).any(|w| w == b"7:comment"));
+
+        let bare = with_trackers(original, &[]).unwrap();
+        assert_eq!(hash(&bare), hash(original));
+        assert!(announced(&bare).is_empty());
+
+        assert_eq!(with_trackers(b"not a torrent", &wanted), None);
+        assert_eq!(with_trackers(b"d4:infoi1e", &wanted), None);
     }
 
     #[test]
