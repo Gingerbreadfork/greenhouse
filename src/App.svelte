@@ -35,8 +35,27 @@
 
   store.init().catch((e) => store.toast('Greenhouse could not start its engine', 'bad', String(e)));
 
+  /** Sources waiting for the add sheet, which shows one at a time. */
+  const waiting: { kind: 'text' | 'file'; value: string }[] = [];
+
+  function enqueue(kind: 'text' | 'file', value: string) {
+    waiting.push({ kind, value });
+    void next();
+  }
+
+  async function next() {
+    while (!staging && !staged && waiting.length > 0) {
+      const { kind, value } = waiting.shift()!;
+      await stage(kind, value);
+    }
+  }
+
+  function closeSheet() {
+    staged = null;
+    void next();
+  }
+
   async function stage(kind: 'text' | 'file', value: string) {
-    if (staging) return;
     staging = true;
     try {
       const info = await api.stageSource(kind, value);
@@ -44,9 +63,7 @@
         await addWithDefaults(info);
         return;
       }
-      const replaced = staged;
       staged = info;
-      if (replaced) api.discardStaged(replaced.token).catch(() => {});
     } catch (e) {
       store.toast('That could not be opened', 'bad', String(e));
     } finally {
@@ -89,7 +106,7 @@
       filters: [{ name: 'Torrent files', extensions: ['torrent'] }]
     });
     const list = Array.isArray(picked) ? picked : picked ? [picked] : [];
-    for (const path of list) await stage('file', path);
+    for (const path of list) enqueue('file', path);
   }
 
   async function act(id: number, action: 'pause' | 'start' | 'remove' | 'reveal') {
@@ -264,20 +281,20 @@
   // Dropping .torrent files anywhere in the window opens the add sheet.
   $effect(() => {
     const unlisten = [
-      listen<{ paths: string[] }>('tauri://drag-drop', async (e) => {
+      listen<{ paths: string[] }>('tauri://drag-drop', (e) => {
         dropping = false;
         const files = (e.payload.paths ?? []).filter((p) => p.toLowerCase().endsWith('.torrent'));
         if (files.length === 0) {
           store.toast('Only .torrent files can be dropped here', 'info');
           return;
         }
-        for (const path of files) await stage('file', path);
+        for (const path of files) enqueue('file', path);
       }),
       listen('tauri://drag-enter', () => (dropping = true)),
       listen('tauri://drag-leave', () => (dropping = false)),
-      listen<string[]>('greenhouse://open', async (e) => {
+      listen<string[]>('greenhouse://open', (e) => {
         for (const arg of e.payload) {
-          await stage(arg.toLowerCase().endsWith('.torrent') ? 'file' : 'text', arg);
+          enqueue(arg.toLowerCase().endsWith('.torrent') ? 'file' : 'text', arg);
         }
       })
     ];
@@ -322,7 +339,7 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="app">
-  <TopBar onadd={(text) => stage('text', text)} onpick={pickFiles} />
+  <TopBar onadd={(text) => enqueue('text', text)} onpick={pickFiles} />
 
   <div class="body">
     <Sidebar onshortcuts={() => (shortcuts = true)} />
@@ -365,9 +382,9 @@
   {#key staged.token}
     <AddSheet
       {staged}
-      onclose={() => (staged = null)}
+      onclose={closeSheet}
       ondone={(result) => {
-        staged = null;
+        closeSheet();
         store.announceAdd(result);
       }}
     />
