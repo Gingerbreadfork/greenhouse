@@ -1290,6 +1290,11 @@ async fn commit_resolved(
 ) -> CmdResult<CommitResult> {
     let trackers = commit_trackers(state, staged, request);
 
+    // The engine reads an empty selection as "everything".
+    if request.selected_files.as_ref().is_some_and(|f| f.is_empty()) && !staged.files.is_empty() {
+        return Err("Every file in it is a type you skip by default, so nothing was added.".into());
+    }
+
     let (chosen, incomplete_dir) = {
         let settings = state.settings.read();
         let chosen = match request.download_dir.trim() {
@@ -1321,10 +1326,10 @@ async fn commit_resolved(
         paused: request.start_paused,
         overwrite: true,
         output_folder,
-        only_files: request.selected_files.clone().filter(|f| {
-            // An empty or complete selection means "everything".
-            !f.is_empty() && f.len() != staged.files.len()
-        }),
+        only_files: request
+            .selected_files
+            .clone()
+            .filter(|f| f.len() != staged.files.len()),
         trackers: if trackers.is_empty() {
             None
         } else {
@@ -2466,6 +2471,47 @@ mod tests {
             assert_eq!(second.id, first.id);
             assert_eq!(engine::collect_rows(&state.session()).len(), 1);
             assert!(settings::load_pending_moves(&state.paths.pending_moves_file()).is_empty());
+        });
+    }
+
+    async fn make_torrent(dir: &Path, name: &str, contents: &[u8], trackers: &[&str]) -> Bytes {
+        let payload = dir.join(name);
+        std::fs::create_dir_all(&payload).unwrap();
+        std::fs::write(payload.join("a.bin"), contents).unwrap();
+        std::fs::write(payload.join("b.bin"), contents).unwrap();
+        librqbit::create_torrent(
+            &payload,
+            librqbit::CreateTorrentOptions {
+                name: None,
+                trackers: trackers.iter().map(|t| t.to_string()).collect(),
+                piece_length: None,
+            },
+            &librqbit::spawn_utils::BlockingSpawner::new(1),
+        )
+        .await
+        .unwrap()
+        .as_bytes()
+        .unwrap()
+    }
+
+    /// An automatic add where every file is a skipped type adds nothing.
+    #[test]
+    fn nothing_is_added_when_every_file_is_skipped() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("all-skipped", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            state.settings.write().skip_types = vec!["bin".into()];
+            let torrent = make_torrent(&root, "payload", b"some bytes", &[]).await;
+
+            let Err(error) = add_file_with_defaults(&state, "a".into(), torrent).await else {
+                panic!("it was added");
+            };
+            assert!(error.contains("skip"), "{error}");
+            assert!(engine::collect_rows(&state.session()).is_empty());
         });
     }
 
