@@ -120,12 +120,16 @@ pub struct Running {
     pub blocklist_loaded: Option<u64>,
     /// The settings this engine was built from, to fall back on.
     pub applied: Settings,
+    /// For feeds, tracker lists and the blocklist. Tied to the same interface
+    /// as the engine, so those requests cannot go around it.
+    pub http: reqwest::Client,
 }
 
 impl Running {
     pub fn new(engine: Engine, applied: Settings) -> Self {
         Self {
             api: Api::new(engine.session.clone(), None),
+            http: http_client(engine.bound_interface.as_deref()),
             session: engine.session,
             bound_interface: engine.bound_interface,
             blocklist_active: engine.blocklist_active,
@@ -133,6 +137,20 @@ impl Running {
             applied,
         }
     }
+}
+
+fn http_client(bound_interface: Option<&str>) -> reqwest::Client {
+    let builder = reqwest::Client::builder()
+        .user_agent(concat!("Greenhouse/", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(20));
+    #[cfg(target_os = "linux")]
+    let builder = match bound_interface {
+        Some(device) => builder.interface(device),
+        None => builder,
+    };
+    #[cfg(not(target_os = "linux"))]
+    let _ = bound_interface;
+    builder.build().unwrap_or_default()
 }
 
 /// Holds the running engine so it can be replaced without restarting the app.
@@ -533,6 +551,25 @@ mod tests {
         let (device, warning) = choose_bind_device("wg0", |_| false);
         assert_eq!(device.as_deref(), Some("lo"));
         assert!(warning.unwrap().contains("wg0"));
+    }
+
+    /// Feed and blocklist requests go out over the bound interface or not at all.
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn requests_follow_the_bound_interface() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket.read(&mut [0u8; 1024]).await;
+                let _ = socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n").await;
+            }
+        });
+
+        assert!(http_client(Some("lo")).get(&url).send().await.is_ok());
+        assert!(http_client(Some("gh-not-there0")).get(&url).send().await.is_err());
     }
 
     fn offline(blocklist_url: Option<String>) -> SessionOptions {

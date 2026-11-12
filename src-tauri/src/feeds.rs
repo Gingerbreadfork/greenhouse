@@ -388,7 +388,7 @@ pub async fn check<R: Runtime>(app: &tauri::AppHandle<R>, feed: &Feed) -> FeedSt
         return feeds.status.get(&feed.id).cloned().unwrap_or_default();
     }
     let fetched = async {
-        let response = state.http.get(&feed.url).send().await.map_err(|e| e.to_string())?;
+        let response = state.http().get(&feed.url).send().await.map_err(|e| e.to_string())?;
         if !response.status().is_success() {
             return Err(format!("the server replied {}", response.status()));
         }

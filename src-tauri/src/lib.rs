@@ -119,11 +119,6 @@ pub fn run() {
                 activity: Mutex::new(activity),
                 stream,
                 startup_warnings,
-                http: reqwest::Client::builder()
-                    .user_agent(concat!("Greenhouse/", env!("CARGO_PKG_VERSION")))
-                    .timeout(Duration::from_secs(20))
-                    .build()
-                    .unwrap_or_default(),
             });
 
             background::sync_tray(app.handle(), background::keeps_running(app.handle()));

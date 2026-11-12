@@ -37,12 +37,15 @@ pub struct AppState {
     /// Serves files to a media player while they download.
     pub stream: Option<StreamServer>,
     pub startup_warnings: Vec<String>,
-    pub http: reqwest::Client,
 }
 
 impl AppState {
     pub fn session(&self) -> Arc<Session> {
         self.engine.get().session.clone()
+    }
+
+    pub fn http(&self) -> reqwest::Client {
+        self.engine.get().http.clone()
     }
 
     pub fn api(&self) -> Api {
@@ -365,7 +368,7 @@ pub async fn download_blocklist(state: &AppState) -> CmdResult<()> {
         return Ok(());
     }
     let response = state
-        .http
+        .http()
         .get(&url)
         .timeout(std::time::Duration::from_secs(180))
         .send()
@@ -1471,7 +1474,7 @@ pub async fn fetch_tracker_list(
     state: tauri::State<'_, AppState>,
     url: String,
 ) -> CmdResult<Vec<String>> {
-    let response = state.http.get(&url).send().await.map_err(err)?;
+    let response = state.http().get(&url).send().await.map_err(err)?;
     if !response.status().is_success() {
         return Err(format!("the server replied {}", response.status()));
     }
@@ -1915,7 +1918,6 @@ mod tests {
             activity: Mutex::new(ActivityLog::load(root.join("activity.json"))),
             stream: None,
             startup_warnings: vec![],
-            http: reqwest::Client::new(),
         });
         app
     }
