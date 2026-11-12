@@ -44,6 +44,32 @@ pub fn parse_magnet(uri: &str) -> ParsedMagnet {
     out
 }
 
+/// A magnet link or bare info hash with `trackers` added to the ones it
+/// already names. Any other source comes back unchanged.
+pub fn magnet_with_trackers(source: &str, trackers: &[String]) -> String {
+    use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+    let source = source.trim();
+    let mut magnet = if source.starts_with("magnet:") {
+        source.to_string()
+    } else if source.len() == 40 && source.chars().all(|c| c.is_ascii_hexdigit()) {
+        format!("magnet:?xt=urn:btih:{source}")
+    } else {
+        return source.to_string();
+    };
+    let mut seen: std::collections::HashSet<String> = parse_magnet(&magnet)
+        .trackers
+        .iter()
+        .map(|t| t.to_ascii_lowercase())
+        .collect();
+    for tracker in trackers {
+        let tracker = tracker.trim();
+        if !tracker.is_empty() && seen.insert(tracker.to_ascii_lowercase()) {
+            magnet.push_str(&format!("&tr={}", utf8_percent_encode(tracker, NON_ALPHANUMERIC)));
+        }
+    }
+    magnet
+}
+
 fn normalize_info_hash(hash: &str) -> String {
     let h = hash.trim();
     if h.len() == 32 {
@@ -234,6 +260,26 @@ mod tests {
         );
         assert_eq!(m.name.as_deref(), Some("Big Buck Bunny"));
         assert_eq!(m.trackers, vec!["udp://tracker.example:1337/announce"]);
+    }
+
+    #[test]
+    fn trackers_are_written_into_a_magnet_link() {
+        let own = "udp://own.example:1/announce".to_string();
+        let pack = "udp://pack.example:2/announce".to_string();
+        let hash = "cab507494d02ebb1178b38f2e9d7be299c86b862";
+        let extra = [own.to_uppercase(), pack.clone(), pack.clone()];
+
+        let link = format!("magnet:?xt=urn:btih:{hash}&tr=udp%3A%2F%2Fown.example%3A1%2Fannounce&so=0");
+        let with = magnet_with_trackers(&link, &extra);
+        assert!(with.starts_with(&link));
+        assert_eq!(parse_magnet(&with).trackers, vec![own, pack.clone()]);
+
+        let bare = parse_magnet(&magnet_with_trackers(hash, &extra[1..]));
+        assert_eq!(bare.info_hash.as_deref(), Some(hash));
+        assert_eq!(bare.trackers, vec![pack]);
+
+        let url = "https://site.example/a.torrent";
+        assert_eq!(magnet_with_trackers(url, &extra), url);
     }
 
     #[test]

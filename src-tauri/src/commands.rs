@@ -859,7 +859,11 @@ async fn resolve(
 ) -> anyhow::Result<Staged> {
     let add = match &staged.bytes {
         Some(bytes) => AddTorrent::from_bytes(bytes.clone()),
-        None => AddTorrent::from_url(staged.source.clone()),
+        // The engine takes a magnet's trackers from the link and nowhere else.
+        None => AddTorrent::from_url(torrentsrc::magnet_with_trackers(
+            &staged.source,
+            extra_trackers,
+        )),
     };
     let trackers = torrentsrc::merge_trackers(&[&staged.trackers, extra_trackers]);
     let opts = AddTorrentOptions {
