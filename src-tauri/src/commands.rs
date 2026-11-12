@@ -2894,6 +2894,47 @@ mod tests {
         });
     }
 
+    /// A download that finishes is reported once. A torrent that was already
+    /// complete, or was only checked again, is not.
+    #[test]
+    fn only_a_download_that_just_finished_is_announced() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("announce", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            {
+                let mut settings = state.settings.write();
+                settings.start_paused = true;
+                settings.notify_on_done = false;
+            }
+            let torrent = make_torrent(&root, "payload", b"some bytes", &[]).await;
+            add_file_with_defaults(&state, "a".into(), torrent).await.unwrap();
+            let finished = |downloaded_now| {
+                let mut rows = engine::collect_rows(&state.session());
+                rows[0].finished = true;
+                rows[0].downloaded_now = downloaded_now;
+                rows
+            };
+            let announced = || {
+                let log = state.activity.lock().list();
+                log.iter().filter(|e| e.kind == "finished").count()
+            };
+
+            let mut seeding = crate::supervisor::Supervisor::default();
+            seeding.announce_finished(app.handle(), &state, &finished(0));
+            seeding.announce_finished(app.handle(), &state, &finished(0));
+            assert_eq!(announced(), 0, "a torrent that was already complete was announced");
+
+            let mut downloaded = crate::supervisor::Supervisor::default();
+            downloaded.announce_finished(app.handle(), &state, &finished(10));
+            downloaded.announce_finished(app.handle(), &state, &finished(10));
+            assert_eq!(announced(), 1);
+        });
+    }
+
     /// A torrent over the limit is not paused while it is checking its files.
     #[test]
     fn the_queue_leaves_a_file_check_running() {

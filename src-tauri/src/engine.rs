@@ -296,6 +296,9 @@ pub struct TorrentRow {
     pub private: bool,
     /// Not running, and not about to once a file check is over.
     pub stopped: bool,
+    /// Bytes downloaded and verified since it last started.
+    #[serde(skip)]
+    pub downloaded_now: u64,
 }
 
 /// Whether the metainfo marks the torrent private, so only its own trackers
@@ -389,6 +392,9 @@ pub fn collect_rows(session: &Arc<Session>) -> Vec<TorrentRow> {
                         TorrentStatsState::Live => false,
                         TorrentStatsState::Paused | TorrentStatsState::Error => true,
                     },
+                    downloaded_now: live
+                        .map(|l| l.snapshot.downloaded_and_checked_bytes)
+                        .unwrap_or_default(),
                 }
             })
             .collect()

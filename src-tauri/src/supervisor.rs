@@ -83,12 +83,8 @@ impl Supervisor {
         state: &AppState,
         rows: &[TorrentRow],
     ) {
-        // Anything already finished when Greenhouse starts is not news.
         if !self.started {
             self.started = true;
-            for row in rows.iter().filter(|r| r.finished) {
-                self.announced.insert(row.info_hash.clone());
-            }
             let live: HashSet<&str> = rows.iter().map(|r| r.info_hash.as_str()).collect();
             state.seeding.lock().retain(&live);
             state.queue_paused.lock().retain(&live);
@@ -144,7 +140,9 @@ impl Supervisor {
         }
     }
 
-    fn announce_finished<R: Runtime>(
+    /// Reports each download that has just finished. A torrent that was
+    /// complete when it started, or only had its files checked, is not news.
+    pub(crate) fn announce_finished<R: Runtime>(
         &mut self,
         app: &AppHandle<R>,
         state: &AppState,
@@ -152,7 +150,7 @@ impl Supervisor {
     ) {
         let notify = state.settings.read().notify_on_done;
         for row in rows.iter().filter(|r| r.finished) {
-            if !self.announced.insert(row.info_hash.clone()) {
+            if !self.announced.insert(row.info_hash.clone()) || row.downloaded_now == 0 {
                 continue;
             }
             activity::record(app, "finished", row.name.clone(), None);
@@ -165,12 +163,9 @@ impl Supervisor {
                     .show();
             }
         }
-        // Forget torrents that have gone, so a re-add can announce again. One
-        // that is only away while its files move comes back.
+        // Forget torrents that have gone, so a re-add can announce again.
         let live: HashSet<&str> = rows.iter().map(|r| r.info_hash.as_str()).collect();
-        let moving = state.moving.lock();
-        self.announced
-            .retain(|h| live.contains(h.as_str()) || moving.contains_key(h));
+        self.announced.retain(|h| live.contains(h.as_str()));
     }
 
     /// Starts moving each finished torrent out of the incomplete folder. A
