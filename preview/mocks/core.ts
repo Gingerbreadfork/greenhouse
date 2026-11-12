@@ -26,6 +26,8 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
         settings_problem: null,
         self_updates: true
       } as T;
+    case 'take_launch_arguments':
+      return [] as T;
     case 'activity_list':
       return activity as T;
     case 'clear_activity':

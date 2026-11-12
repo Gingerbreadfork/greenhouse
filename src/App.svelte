@@ -33,7 +33,20 @@
   let inspectorTab = $state('overview');
   let menu = $state<{ x: number; y: number; items: (MenuItem | 'separator')[] } | null>(null);
 
-  store.init().catch((e) => store.toast('Greenhouse could not start its engine', 'bad', String(e)));
+  const ready = store.init();
+  ready.catch((e) => store.toast('Greenhouse could not start its engine', 'bad', String(e)));
+  // Whatever Greenhouse was launched with, such as a magnet link that was clicked.
+  ready
+    .then(() => api.takeLaunchArguments())
+    .then(openAll)
+    .catch(() => {});
+
+  /** Opens magnet links and .torrent paths handed over from outside the window. */
+  function openAll(args: string[]) {
+    for (const arg of args) {
+      enqueue(arg.toLowerCase().endsWith('.torrent') ? 'file' : 'text', arg);
+    }
+  }
 
   /** Sources waiting for the add sheet, which shows one at a time. */
   const waiting: { kind: 'text' | 'file'; value: string }[] = [];
@@ -296,11 +309,7 @@
       }),
       listen('tauri://drag-enter', () => (dropping = true)),
       listen('tauri://drag-leave', () => (dropping = false)),
-      listen<string[]>('greenhouse://open', (e) => {
-        for (const arg of e.payload) {
-          enqueue(arg.toLowerCase().endsWith('.torrent') ? 'file' : 'text', arg);
-        }
-      })
+      listen<string[]>('greenhouse://open', (e) => openAll(e.payload))
     ];
     return () => {
       for (const p of unlisten) p.then((fn) => fn()).catch(() => {});

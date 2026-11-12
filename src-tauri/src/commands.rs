@@ -45,6 +45,8 @@ pub struct AppState {
     pub startup_warnings: Vec<String>,
     /// Why the saved settings were not used, when they could not be read.
     pub settings_problem: Option<String>,
+    /// What this launch was asked to open, until the window collects it.
+    pub launch_arguments: Mutex<Vec<String>>,
 }
 
 impl AppState {
@@ -188,6 +190,13 @@ pub fn bootstrap(state: tauri::State<'_, AppState>) -> Bootstrap {
         settings_problem: state.settings_problem.clone(),
         self_updates: crate::flatpak::app_id().is_none(),
     }
+}
+
+/// The magnet links and .torrent paths Greenhouse was launched with. The
+/// window asks once it is ready for them, and they are handed over once.
+#[tauri::command]
+pub fn take_launch_arguments(state: tauri::State<'_, AppState>) -> Vec<String> {
+    std::mem::take(&mut state.launch_arguments.lock())
 }
 
 /// Bytes free on the volume a folder is on, or will be on once it exists.
@@ -2014,6 +2023,7 @@ mod tests {
             stream: None,
             startup_warnings: vec![],
             settings_problem: None,
+            launch_arguments: Mutex::new(vec![]),
         });
         app
     }
@@ -2510,6 +2520,18 @@ mod tests {
             assert_eq!(info.bound_interface.as_deref(), Some("port-4242"));
             assert!(info.warnings[0].contains("previous ones are still in use"));
             assert_eq!(engine::collect_rows(&state.session()).len(), 1);
+        });
+    }
+
+    #[test]
+    fn launch_arguments_are_handed_over_once() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("launch-args", false).await;
+            let link = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567".to_string();
+            *app.state::<AppState>().launch_arguments.lock() = vec![link.clone()];
+
+            assert_eq!(take_launch_arguments(app.state()), vec![link]);
+            assert!(take_launch_arguments(app.state()).is_empty());
         });
     }
 

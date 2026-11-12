@@ -123,6 +123,7 @@ pub fn run() {
                 stream,
                 startup_warnings,
                 settings_problem,
+                launch_arguments: Mutex::new(launch_arguments(std::env::args().skip(1))),
             });
 
             background::sync_tray(app.handle(), background::keeps_running(app.handle()));
@@ -134,11 +135,11 @@ pub fn run() {
             refresh_stale_blocklist(app.handle().clone());
             watch::spawn(app.handle().clone());
             feeds::spawn(app.handle().clone());
-            forward_launch_arguments(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
+            commands::take_launch_arguments,
             commands::quit,
             commands::list_interfaces,
             commands::free_space,
@@ -248,20 +249,9 @@ fn refresh_stale_blocklist(app: tauri::AppHandle) {
     });
 }
 
+/// Magnet links and .torrent paths passed on the command line, e.g. when the
+/// app is registered as the system handler.
 fn launch_arguments(args: impl Iterator<Item = String>) -> Vec<String> {
     args.filter(|a| !a.starts_with('-') && !a.is_empty())
         .collect()
-}
-
-/// Magnet links and .torrent paths passed on the command line, e.g. when the
-/// app is registered as the system handler.
-fn forward_launch_arguments(app: tauri::AppHandle) {
-    let args = launch_arguments(std::env::args().skip(1));
-    if args.is_empty() {
-        return;
-    }
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(600)).await;
-        let _ = app.emit("greenhouse://open", args);
-    });
 }

@@ -20,6 +20,7 @@ import type {
 
 export const api = {
   bootstrap: () => invoke<Bootstrap>('bootstrap'),
+  takeLaunchArguments: () => invoke<string[]>('take_launch_arguments'),
   restartEngine: () => invoke<EngineInfo>('restart_engine'),
   freeSpace: (path: string) => invoke<number | null>('free_space', { path }),
   listInterfaces: () => invoke<NetInterface[]>('list_interfaces'),
