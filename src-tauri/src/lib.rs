@@ -116,6 +116,7 @@ pub fn run() {
                 seeding: Mutex::new(seeding),
                 feeds: Mutex::new(feeds),
                 queue_paused: Mutex::new(queue_paused),
+                moving: Mutex::new(HashMap::new()),
                 activity: Mutex::new(activity),
                 stream,
                 startup_warnings,
@@ -186,6 +187,8 @@ pub fn run() {
 fn spawn_ticker(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(900));
+        // A tick that ran long is followed by one tick, not a burst of them.
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut supervisor = supervisor::Supervisor::default();
         loop {
             interval.tick().await;

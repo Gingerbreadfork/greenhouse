@@ -33,6 +33,9 @@ pub struct AppState {
     pub feeds: Mutex<FeedsState>,
     /// Torrents the queue paused, so ones you paused yourself are left alone.
     pub queue_paused: Mutex<QueueHolds>,
+    /// Finished torrents that are out of the session while their files are
+    /// moved, by info hash, as they were last seen.
+    pub moving: Mutex<HashMap<String, TorrentRow>>,
     pub activity: Mutex<ActivityLog>,
     /// Serves files to a media player while they download.
     pub stream: Option<StreamServer>,
@@ -232,6 +235,14 @@ pub fn list_torrents(state: tauri::State<'_, AppState>) -> Vec<TorrentRow> {
 /// The torrent list, with upload figures that carry across restarts.
 pub fn rows_with_totals(state: &AppState) -> Vec<TorrentRow> {
     let mut rows = engine::collect_rows(&state.session());
+    let away: Vec<TorrentRow> = state
+        .moving
+        .lock()
+        .values()
+        .filter(|moving| rows.iter().all(|row| row.info_hash != moving.info_hash))
+        .cloned()
+        .collect();
+    rows.extend(away);
     state.seeding.lock().overlay(&mut rows);
     rows
 }
@@ -1923,6 +1934,7 @@ mod tests {
             seeding: Mutex::new(SeedLedger::default()),
             feeds: Mutex::new(FeedsState::default()),
             queue_paused: Mutex::new(QueueHolds::load(root.join("queue-paused.json"))),
+            moving: Mutex::new(HashMap::new()),
             activity: Mutex::new(ActivityLog::load(root.join("activity.json"))),
             stream: None,
             startup_warnings: vec![],
@@ -2725,6 +2737,59 @@ mod tests {
 
             assert!(!state.queue_paused.lock().contains(&hash));
             assert!(!state.session().get(two.into()).unwrap().is_paused());
+        });
+    }
+
+    /// A download that finishes in the incomplete folder ends up where it
+    /// belongs, and stays in the list while its files are moved.
+    #[test]
+    fn a_finished_download_moves_out_of_the_incomplete_folder() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("move-out", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let partial = root.join("partial").to_string_lossy().into_owned();
+            state.settings.write().incomplete_dir = partial.clone();
+
+            // With the files already in place, the first check finds it finished.
+            let torrent = make_torrent(&root.join("made"), "Release", b"some bytes", &[]).await;
+            let staged = resolve(&state.session(), &staged_file(torrent.to_vec()), &[]).await.unwrap();
+            let staging = PathBuf::from(staging_folder(&partial, &staged));
+            std::fs::create_dir_all(&staging).unwrap();
+            for name in ["a.bin", "b.bin"] {
+                std::fs::copy(root.join("made/Release").join(name), staging.join(name)).unwrap();
+            }
+            add_file_with_defaults(&state, "a".into(), torrent).await.unwrap();
+
+            let mut finished = None;
+            for _ in 0..100 {
+                finished = engine::collect_rows(&state.session()).into_iter().find(|r| r.finished);
+                if finished.is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            let rows = [finished.expect("it never finished checking")];
+            crate::supervisor::Supervisor::default().move_finished(app.handle(), &state, &rows);
+
+            let mut last = rows_with_totals(&state);
+            for _ in 0..100 {
+                assert_eq!(last.len(), 1, "it dropped out of the list");
+                if last[0].finished && last[0].state != "moving" && state.moving.lock().is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                last = rows_with_totals(&state);
+            }
+
+            let destination = root.join("downloads").join("Release");
+            assert_eq!(PathBuf::from(&last[0].output_folder), destination);
+            assert!(destination.join("a.bin").exists() && destination.join("b.bin").exists());
+            assert!(!staging.exists());
+            assert!(settings::load_pending_moves(&state.paths.pending_moves_file()).is_empty());
         });
     }
 

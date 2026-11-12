@@ -112,6 +112,10 @@
   async function act(id: number, action: 'pause' | 'start' | 'remove' | 'reveal') {
     const torrent = store.torrents.find((t) => t.id === id);
     if (!torrent) return;
+    if (torrent.state === 'moving') {
+      store.toast('Its files are still being moved', 'info');
+      return;
+    }
 
     if (action === 'reveal') {
       api.openFolder(id).catch((e) => store.toast('Could not open that folder', 'bad', String(e)));

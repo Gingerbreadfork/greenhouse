@@ -4,6 +4,7 @@ export type TorrentState =
   | 'paused'
   | 'complete'
   | 'checking'
+  | 'moving'
   | 'error';
 
 export interface TorrentRow {

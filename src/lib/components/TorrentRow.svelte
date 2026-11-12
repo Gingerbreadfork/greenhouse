@@ -29,10 +29,13 @@
     paused: { icon: 'pause', word: 'Paused' },
     complete: { icon: 'check', word: 'Finished' },
     checking: { icon: 'refresh', word: 'Checking files' },
+    moving: { icon: 'folder', word: 'Moving files' },
     error: { icon: 'alert', word: 'Stopped' }
   };
 
   const mark = $derived(marks[torrent.state] ?? marks.paused);
+  // Out of the engine until its files have moved, so nothing can act on it.
+  const moving = $derived(torrent.state === 'moving');
   const running = $derived(torrent.state === 'downloading' || torrent.state === 'seeding');
   const canPause = $derived(torrent.state !== 'paused' && torrent.state !== 'complete');
   const idle = $derived(
@@ -45,6 +48,7 @@
 
   const detail = $derived.by(() => {
     if (torrent.state === 'error') return torrent.error ?? 'Stopped by an error';
+    if (moving) return `to ${torrent.output_folder}`;
     if (!torrent.has_metadata) return 'Fetching details from the swarm';
     const parts = [
       `${percent(torrent.progress)} of ${bytes(torrent.total_bytes)}`,
@@ -118,7 +122,7 @@
     {#if trailing}<p class="trailing num">{trailing}</p>{/if}
   </div>
 
-  <div class="actions" role="gridcell" hidden={bulkMode}>
+  <div class="actions" role="gridcell" hidden={bulkMode || moving}>
     {#if canPause}
       <button
         class="act"

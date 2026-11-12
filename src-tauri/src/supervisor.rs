@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::activity;
@@ -71,17 +71,18 @@ impl QueueHolds {
 pub struct Supervisor {
     /// Torrents already reported as finished.
     announced: HashSet<String>,
-    /// Torrents currently being moved, so a slow move is not started twice.
-    moving: HashSet<String>,
-    /// Moved torrents that could not be put back yet, with their names.
-    detached: Vec<(String, RestoreToken)>,
     started: bool,
     last_tick: Option<Instant>,
     last_saved: Option<Instant>,
 }
 
 impl Supervisor {
-    pub async fn tick(&mut self, app: &AppHandle, state: &AppState, rows: &[TorrentRow]) {
+    pub async fn tick<R: Runtime>(
+        &mut self,
+        app: &AppHandle<R>,
+        state: &AppState,
+        rows: &[TorrentRow],
+    ) {
         // Anything already finished when Greenhouse starts is not news.
         if !self.started {
             self.started = true;
@@ -95,8 +96,7 @@ impl Supervisor {
         }
 
         self.announce_finished(app, state, rows);
-        self.reattach(app, state).await;
-        self.move_finished(app, state, rows).await;
+        self.move_finished(app, state, rows);
         self.track_seeding(state, rows);
         self.enforce_seed_limits(app, state, rows).await;
         self.enforce_queue(state, rows).await;
@@ -119,9 +119,9 @@ impl Supervisor {
     }
 
     /// Pauses seeding torrents that have reached the ratio or time limit.
-    async fn enforce_seed_limits(
+    async fn enforce_seed_limits<R: Runtime>(
         &mut self,
-        app: &AppHandle,
+        app: &AppHandle<R>,
         state: &AppState,
         rows: &[TorrentRow],
     ) {
@@ -144,7 +144,12 @@ impl Supervisor {
         }
     }
 
-    fn announce_finished(&mut self, app: &AppHandle, state: &AppState, rows: &[TorrentRow]) {
+    fn announce_finished<R: Runtime>(
+        &mut self,
+        app: &AppHandle<R>,
+        state: &AppState,
+        rows: &[TorrentRow],
+    ) {
         let notify = state.settings.read().notify_on_done;
         for row in rows.iter().filter(|r| r.finished) {
             if !self.announced.insert(row.info_hash.clone()) {
@@ -160,14 +165,22 @@ impl Supervisor {
                     .show();
             }
         }
-        // Forget torrents that have gone, so a re-add can announce again.
+        // Forget torrents that have gone, so a re-add can announce again. One
+        // that is only away while its files move comes back.
         let live: HashSet<&str> = rows.iter().map(|r| r.info_hash.as_str()).collect();
-        self.announced.retain(|h| live.contains(h.as_str()));
+        let moving = state.moving.lock();
+        self.announced
+            .retain(|h| live.contains(h.as_str()) || moving.contains_key(h));
     }
 
-    /// A finished torrent that downloaded into the incomplete folder is
-    /// detached, moved to its real destination, and re-attached there.
-    async fn move_finished(&mut self, app: &AppHandle, state: &AppState, rows: &[TorrentRow]) {
+    /// Starts moving each finished torrent out of the incomplete folder. A
+    /// move runs on its own, so a slow one does not hold up the tick.
+    pub(crate) fn move_finished<R: Runtime>(
+        &mut self,
+        app: &AppHandle<R>,
+        state: &AppState,
+        rows: &[TorrentRow],
+    ) {
         let file = state.paths.pending_moves_file();
         let moves = settings::load_pending_moves(&file);
         if moves.is_empty() {
@@ -175,92 +188,26 @@ impl Supervisor {
         }
 
         for row in rows.iter().filter(|r| r.finished && r.has_metadata) {
-            let destination = match moves.get(&row.info_hash) {
-                Some(d) => d.clone(),
-                None => continue,
+            let Some(destination) = moves.get(&row.info_hash) else {
+                continue;
             };
-            if !self.moving.insert(row.info_hash.clone()) {
+            if PathBuf::from(&row.output_folder) == PathBuf::from(destination) {
+                settings::drop_pending_move(&file, &row.info_hash);
                 continue;
             }
-
-            let from = PathBuf::from(&row.output_folder);
-            let to = PathBuf::from(&destination);
-            if from == to {
-                self.clear_pending(state, &row.info_hash);
-                self.moving.remove(&row.info_hash);
-                continue;
-            }
-
-            let token = match forget_inner(state, row.id).await {
-                Ok(t) => t,
-                Err(_) => {
-                    self.moving.remove(&row.info_hash);
-                    continue;
-                }
+            let shown = TorrentRow {
+                state: "moving".into(),
+                output_folder: destination.clone(),
+                download_speed: 0,
+                upload_speed: 0,
+                ..row.clone()
             };
-
-            let moved = tokio::task::spawn_blocking({
-                let from = from.clone();
-                let to = to.clone();
-                move || settings::move_contents(&from, &to)
-            })
-            .await
-            .unwrap_or_else(|e| Err(MoveFailed::Stayed(anyhow::anyhow!("{e}"))));
-
-            let restore = match moved {
-                Ok(()) => {
-                    let place = to.to_string_lossy().into_owned();
-                    activity::record(app, "moved", row.name.clone(), Some(format!("Moved to {place}")));
-                    RestoreToken {
-                        output_folder: place,
-                        ..token
-                    }
-                }
-                Err(MoveFailed::Stayed(e)) => {
-                    let why = format!("Could not be moved to {}: {e}", to.display());
-                    report_failed_move(app, &row.name, why, format!("{} stayed where it was: {e}", row.name));
-                    token
-                }
-                // Left paused so it does not download again what was moved.
-                Err(MoveFailed::Split(e)) => {
-                    let why = format!(
-                        "Only part of it reached {}, the rest is still in {}: {e}",
-                        to.display(),
-                        from.display()
-                    );
-                    report_failed_move(app, &row.name, why.clone(), format!("{}: {why}", row.name));
-                    RestoreToken {
-                        paused: true,
-                        ..token
-                    }
-                }
-            };
-
-            self.clear_pending(state, &row.info_hash);
-            self.moving.remove(&row.info_hash);
-            if let Err(e) = restore_inner(state, restore.clone()).await {
-                let why = format!("Could not be put back in the list, trying again: {e}");
-                activity::record(app, "failed", row.name.clone(), Some(why));
-                self.detached.push((row.name.clone(), restore));
+            let started = state.moving.lock().insert(row.info_hash.clone(), shown);
+            if started.is_none() {
+                let task = move_one(app.clone(), row.clone(), destination.clone());
+                tauri::async_runtime::spawn(task);
             }
         }
-    }
-
-    /// Retries torrents that were moved but could not be put back.
-    async fn reattach(&mut self, app: &AppHandle, state: &AppState) {
-        let mut waiting = Vec::new();
-        for (name, token) in std::mem::take(&mut self.detached) {
-            if restore_inner(state, token.clone()).await.is_ok() {
-                activity::record(app, "moved", name, Some("Back in the list".into()));
-            } else {
-                waiting.push((name, token));
-            }
-        }
-        self.detached = waiting;
-    }
-
-    fn clear_pending(&self, state: &AppState, info_hash: &str) {
-        settings::drop_pending_move(&state.paths.pending_moves_file(), info_hash);
     }
 
     pub(crate) async fn enforce_queue(&mut self, state: &AppState, rows: &[TorrentRow]) {
@@ -319,7 +266,74 @@ impl Supervisor {
     }
 }
 
-fn report_failed_move(app: &AppHandle, name: &str, note: String, body: String) {
+/// Detaches a finished torrent, moves its files to where they belong and
+/// puts it back there.
+async fn move_one<R: Runtime>(app: AppHandle<R>, row: TorrentRow, destination: String) {
+    let state = app.state::<AppState>();
+    let from = PathBuf::from(&row.output_folder);
+    let to = PathBuf::from(&destination);
+
+    // Still in the incomplete folder, so the next tick tries again.
+    let Ok(token) = forget_inner(&state, row.id).await else {
+        state.moving.lock().remove(&row.info_hash);
+        return;
+    };
+
+    let moved = tokio::task::spawn_blocking({
+        let (from, to) = (from.clone(), to.clone());
+        move || settings::move_contents(&from, &to)
+    })
+    .await
+    .unwrap_or_else(|e| Err(MoveFailed::Stayed(anyhow::anyhow!("{e}"))));
+
+    let restore = match moved {
+        Ok(()) => {
+            let place = to.to_string_lossy().into_owned();
+            let note = format!("Moved to {place}");
+            activity::record(&app, "moved", row.name.clone(), Some(note));
+            RestoreToken {
+                output_folder: place,
+                ..token
+            }
+        }
+        Err(MoveFailed::Stayed(e)) => {
+            let why = format!("Could not be moved to {}: {e}", to.display());
+            let body = format!("{} stayed where it was: {e}", row.name);
+            report_failed_move(&app, &row.name, why, body);
+            token
+        }
+        // Left paused so it does not download again what was moved.
+        Err(MoveFailed::Split(e)) => {
+            let why = format!(
+                "Only part of it reached {}, the rest is still in {}: {e}",
+                to.display(),
+                from.display()
+            );
+            report_failed_move(&app, &row.name, why.clone(), format!("{}: {why}", row.name));
+            RestoreToken {
+                paused: true,
+                ..token
+            }
+        }
+    };
+
+    settings::drop_pending_move(&state.paths.pending_moves_file(), &row.info_hash);
+    let mut retrying = false;
+    while let Err(e) = restore_inner(&state, restore.clone()).await {
+        if !retrying {
+            let why = format!("Could not be put back in the list, trying again: {e}");
+            activity::record(&app, "failed", row.name.clone(), Some(why));
+            retrying = true;
+        }
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+    if retrying {
+        activity::record(&app, "moved", row.name.clone(), Some("Back in the list".into()));
+    }
+    state.moving.lock().remove(&row.info_hash);
+}
+
+fn report_failed_move<R: Runtime>(app: &AppHandle<R>, name: &str, note: String, body: String) {
     activity::record(app, "failed", name.to_string(), Some(note));
     let _ = app
         .notification()
