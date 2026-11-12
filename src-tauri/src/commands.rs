@@ -494,6 +494,38 @@ where
     })
 }
 
+/// Starts the engine at launch, with the settings it ended up using. A fixed
+/// port that cannot be opened gives way to any free one, so a taken port does
+/// not keep Greenhouse from starting.
+pub async fn start_engine_with<F, Fut>(
+    wanted: &Settings,
+    build: F,
+) -> anyhow::Result<(engine::Engine, Settings)>
+where
+    F: Fn(Settings) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<engine::Engine>>,
+{
+    let failed = match build(wanted.clone()).await {
+        Ok(engine) => return Ok((engine, wanted.clone())),
+        Err(e) => e,
+    };
+    if wanted.listen_port == 0 {
+        return Err(failed);
+    }
+    let any_port = Settings {
+        listen_port: 0,
+        ..wanted.clone()
+    };
+    let Ok(mut engine) = build(any_port.clone()).await else {
+        return Err(failed);
+    };
+    engine.warnings.push(format!(
+        "Port {} could not be opened, so another one is in use for now: {failed:#}",
+        wanted.listen_port
+    ));
+    Ok((engine, any_port))
+}
+
 /// The old engine's ports can take a moment to come free.
 async fn build_with_retries<F, Fut>(build: &F, settings: &Settings) -> anyhow::Result<engine::Engine>
 where
@@ -2467,6 +2499,28 @@ mod tests {
             assert_eq!(info.bound_interface.as_deref(), Some("port-4242"));
             assert!(info.warnings[0].contains("previous ones are still in use"));
             assert_eq!(engine::collect_rows(&state.session()).len(), 1);
+        });
+    }
+
+    /// A port that cannot be opened at launch gives way to a free one, with a
+    /// warning, instead of stopping the app from starting.
+    #[test]
+    fn a_taken_port_does_not_stop_the_launch() {
+        tauri::async_runtime::block_on(async {
+            let root = std::env::temp_dir().join(format!("gh-launch-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            let build = |settings: Settings| persistent_engine(root.clone(), settings);
+
+            let taken = Settings { listen_port: 1, ..Default::default() };
+            let (engine, applied) = start_engine_with(&taken, build).await.unwrap();
+            assert_eq!(applied.listen_port, 0);
+            assert!(engine.warnings[0].contains("Port 1"), "{:?}", engine.warnings);
+            engine.session.stop().await;
+
+            let fine = Settings { listen_port: 4242, ..Default::default() };
+            let (engine, applied) = start_engine_with(&fine, build).await.unwrap();
+            assert_eq!(applied.listen_port, 4242);
+            assert!(engine.warnings.is_empty());
         });
     }
 

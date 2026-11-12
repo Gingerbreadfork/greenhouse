@@ -93,13 +93,14 @@ pub fn run() {
                 let _ = settings::save(&paths.settings_file(), &loaded);
             }
 
-            let mut engine =
-                tauri::async_runtime::block_on(engine::build_session(&paths, &loaded))?;
+            let build = |settings: settings::Settings| {
+                let paths = paths.clone();
+                async move { engine::build_session(&paths, &settings).await }
+            };
+            let (mut engine, applied) =
+                tauri::async_runtime::block_on(commands::start_engine_with(&loaded, build))?;
             let startup_warnings = std::mem::take(&mut engine.warnings);
-            let engine = Arc::new(engine::EngineSlot::new(engine::Running::new(
-                engine,
-                loaded.clone(),
-            )));
+            let engine = Arc::new(engine::EngineSlot::new(engine::Running::new(engine, applied)));
             let seeding = seeding::SeedLedger::load(&paths.seeding_file());
             let feeds = feeds::FeedsState::load(&paths.feeds_file());
             let activity = activity::ActivityLog::load(paths.activity_file());
