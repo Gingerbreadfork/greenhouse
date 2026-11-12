@@ -301,16 +301,19 @@ impl Supervisor {
         for (index, row) in ordered.iter().enumerate() {
             let should_run = index < limit;
             let is_stopped = row.state == "paused" || row.state == "complete";
+            // A file check that is paused never finishes, so it is left to run.
+            let is_running = row.state == "downloading" || row.state == "seeding";
 
             let held = state.queue_paused.lock().contains(&row.info_hash);
             if should_run && is_stopped && held {
                 if state.api().api_torrent_action_start(row.id.into()).await.is_ok() {
                     state.queue_paused.lock().remove(&row.info_hash);
                 }
-            } else if !should_run && !is_stopped {
-                if state.api().api_torrent_action_pause(row.id.into()).await.is_ok() {
-                    state.queue_paused.lock().insert(row.info_hash.clone());
-                }
+            } else if !should_run
+                && is_running
+                && state.api().api_torrent_action_pause(row.id.into()).await.is_ok()
+            {
+                state.queue_paused.lock().insert(row.info_hash.clone());
             }
         }
     }

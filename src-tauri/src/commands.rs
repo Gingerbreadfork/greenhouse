@@ -2693,6 +2693,33 @@ mod tests {
         });
     }
 
+    /// A torrent over the limit is not paused while it is checking its files.
+    #[test]
+    fn the_queue_leaves_a_file_check_running() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("queue-check", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            state.settings.write().max_active_downloads = 1;
+            let one = make_torrent(&root.join("one"), "One", b"first", &[]).await;
+            let two = make_torrent(&root.join("two"), "Two", b"second", &[]).await;
+            add_file_with_defaults(&state, "one".into(), one).await.unwrap();
+            let two = add_file_with_defaults(&state, "two".into(), two).await.unwrap().id.unwrap();
+
+            let mut rows = engine::collect_rows(&state.session());
+            let checking = rows.iter_mut().find(|r| r.id == two).unwrap();
+            checking.state = "checking".into();
+            let hash = checking.info_hash.clone();
+            crate::supervisor::Supervisor::default().enforce_queue(&state, &rows).await;
+
+            assert!(!state.queue_paused.lock().contains(&hash));
+            assert!(!state.session().get(two.into()).unwrap().is_paused());
+        });
+    }
+
     /// A .torrent file in the watch folder is added once, and one that cannot
     /// be read is set aside instead of being retried forever.
     #[test]
