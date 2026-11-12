@@ -325,6 +325,10 @@ pub async fn set_file_selection(
     id: usize,
     indices: Vec<usize>,
 ) -> CmdResult<()> {
+    // The engine counts a torrent with nothing selected as finished.
+    if indices.is_empty() {
+        return Err("At least one file has to stay included.".into());
+    }
     let set: HashSet<usize> = indices.into_iter().collect();
     state
         .api()

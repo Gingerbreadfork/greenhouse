@@ -110,11 +110,21 @@
     }
   }
 
-  async function toggleFile(index: number, on: boolean) {
+  // Returns false to keep the tick on the last file still included.
+  function toggleFile(index: number, on: boolean) {
     if (!detail) return;
     const next = detail.files
       .filter((f) => (f.index === index ? on : f.included))
       .map((f) => f.index);
+    if (next.length === 0) {
+      store.toast('At least one file has to stay included', 'info');
+      return false;
+    }
+    setFile(index, on, next);
+  }
+
+  async function setFile(index: number, on: boolean, next: number[]) {
+    if (!detail) return;
     try {
       await api.setFileSelection(torrent.id, next);
       detail = { ...detail, files: detail.files.map((f) => (f.index === index ? { ...f, included: on } : f)) };

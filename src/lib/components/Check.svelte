@@ -16,9 +16,17 @@
     hint?: string;
     disabled?: boolean;
     indeterminate?: boolean;
-    onchange?: (checked: boolean) => void;
+    /** Returning false turns the change down, and the box goes back. */
+    onchange?: (checked: boolean) => unknown;
     children?: Snippet;
   } = $props();
+
+  function changed(input: HTMLInputElement) {
+    if (onchange?.(input.checked) === false) {
+      input.checked = !input.checked;
+      checked = input.checked;
+    }
+  }
 </script>
 
 <label class="check" class:disabled class:row={!!children}>
@@ -26,7 +34,7 @@
     type="checkbox"
     bind:checked
     {disabled}
-    onchange={(e) => onchange?.(e.currentTarget.checked)}
+    onchange={(e) => changed(e.currentTarget)}
   />
   <span class="box" class:mixed={indeterminate && !checked}>
     {#if checked}
