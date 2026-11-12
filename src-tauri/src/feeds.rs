@@ -366,12 +366,32 @@ impl FeedsState {
         Some(item.clone())
     }
 
+    /// Starts over for every feed whose address changed, so its next fetch
+    /// only takes note of what is there.
+    pub fn start_over(&mut self, was: &[Feed], now: &[Feed], file: &Path) {
+        let mut changed = false;
+        for feed in now.iter().filter(|feed| moved(was, feed)) {
+            changed |= self.seen.remove(&feed.id).is_some();
+            self.status.remove(&feed.id);
+        }
+        if changed {
+            self.save(file);
+        }
+    }
+
     /// Drops what is kept for feeds that no longer exist.
     fn retain(&mut self, feeds: &[Feed]) {
         let known = |id: &String| feeds.iter().any(|f| &f.id == id);
         self.seen.retain(|id, _| known(id));
         self.status.retain(|id, _| known(id));
     }
+}
+
+/// Whether `feeds` holds this feed under a different address.
+fn moved(feeds: &[Feed], feed: &Feed) -> bool {
+    feeds
+        .iter()
+        .any(|other| other.id == feed.id && other.url.trim() != feed.url.trim())
 }
 
 fn download_dir(feed: &Feed) -> Option<String> {
@@ -399,6 +419,8 @@ pub async fn check<R: Runtime>(app: &tauri::AppHandle<R>, feed: &Feed) -> FeedSt
     let to_add = {
         let mut feeds = state.feeds.lock();
         match fetched {
+            // The address was changed while this was being fetched.
+            Ok(_) if moved(&state.settings.read().feeds, feed) => Vec::new(),
             Ok(items) => {
                 let to_add = feeds.absorb(feed, &items);
                 feeds.save(&state.paths.feeds_file());
@@ -639,6 +661,24 @@ mod tests {
         let views = &state.status["f"].items;
         assert!(views.iter().find(|v| v.guid == "ep-3").unwrap().added);
         assert!(!views.iter().find(|v| v.guid == "ep-2").unwrap().added);
+    }
+
+    #[test]
+    fn a_feed_given_a_new_address_starts_over() {
+        let file = std::env::temp_dir().join(format!("gh-feeds-{}.json", std::process::id()));
+        let mut state = FeedsState::default();
+        let old = Feed { url: "https://site.example/a".into(), ..feed("", "") };
+        let new = Feed { url: "https://site.example/b".into(), ..old.clone() };
+        let items = parse_feed(RSS).unwrap();
+        state.absorb(&old, &[]);
+
+        state.start_over(std::slice::from_ref(&old), std::slice::from_ref(&new), &file);
+        assert!(state.absorb(&new, &items).is_empty(), "the backlog was downloaded");
+
+        // Saving it again with the same address keeps what it has seen.
+        state.start_over(std::slice::from_ref(&new), std::slice::from_ref(&new), &file);
+        assert!(state.absorb(&new, &items).is_empty());
+        std::fs::remove_file(&file).ok();
     }
 
     /// Uses the network: a real release feed parses into torrent links.

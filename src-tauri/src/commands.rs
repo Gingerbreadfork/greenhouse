@@ -216,7 +216,11 @@ pub fn save_settings(
         .ratelimits
         .set_upload_bps(engine::kbps_to_bps(next.upload_limit_kbps));
     settings::save(&state.paths.settings_file(), &next).map_err(err)?;
-    *state.settings.write() = next.clone();
+    // Both are held so a check in flight cannot record the old address.
+    let mut kept = state.feeds.lock();
+    let mut current = state.settings.write();
+    kept.start_over(&current.feeds, &next.feeds, &state.paths.feeds_file());
+    *current = next.clone();
     Ok(next)
 }
 
