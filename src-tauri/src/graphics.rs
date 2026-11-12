@@ -1,11 +1,9 @@
 //! Works around WebKitGTK 2.54 flickering dialogs and panels on Wayland.
 
-/// Moves WebKitGTK's frames through shared memory instead of DMA-BUF.
-///
-/// From 2.54 the DMA-BUF path paints transparent windows in pieces, so
-/// anything that appears with an animation flickers. Shared memory keeps
-/// GPU rendering and transparency, and only costs a copy per frame. A value
-/// already in the environment wins.
+/// Moves WebKitGTK's frames through shared memory instead of DMA-BUF. From
+/// 2.54 the DMA-BUF path paints transparent windows in pieces, so anything
+/// that appears with an animation flickers. A value already in the
+/// environment wins.
 pub fn settle_webkit() {
     #[cfg(target_os = "linux")]
     {

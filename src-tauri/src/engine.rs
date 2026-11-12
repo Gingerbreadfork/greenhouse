@@ -171,7 +171,8 @@ impl EngineSlot {
 }
 
 /// Peers per torrent: the setting when there is one, otherwise the engine's
-/// default, lowered to one per 128 open files the system allows (at least 16).
+/// default, lowered to one per 128 open files the system allows but never
+/// below 16.
 fn peer_limit(setting: u32, open_files: Option<u64>) -> Option<usize> {
     if setting > 0 {
         return Some(setting as usize);
