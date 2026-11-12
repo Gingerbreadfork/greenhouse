@@ -161,6 +161,7 @@ mod tests {
             ratio: 0.0,
             has_metadata: true,
             private: false,
+            stopped: state != "seeding",
         }
     }
 

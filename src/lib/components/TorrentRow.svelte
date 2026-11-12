@@ -37,7 +37,7 @@
   // Out of the engine until its files have moved, so nothing can act on it.
   const moving = $derived(torrent.state === 'moving');
   const running = $derived(torrent.state === 'downloading' || torrent.state === 'seeding');
-  const canPause = $derived(torrent.state !== 'paused' && torrent.state !== 'complete');
+  const canPause = $derived(!torrent.stopped);
   const idle = $derived(
     !running || (torrent.download_speed === 0 && torrent.upload_speed === 0)
   );

@@ -124,7 +124,7 @@
       case ' ':
         if (cursorTorrent) {
           event.preventDefault();
-          const paused = cursorTorrent.state === 'paused' || cursorTorrent.state === 'complete';
+          const paused = cursorTorrent.stopped;
           if (count > 1) onbulk(paused ? 'start' : 'pause');
           else onaction(cursorTorrent.id, paused ? 'start' : 'pause');
         }

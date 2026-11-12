@@ -294,6 +294,8 @@ pub struct TorrentRow {
     pub ratio: f64,
     pub has_metadata: bool,
     pub private: bool,
+    /// Not running, and not about to once a file check is over.
+    pub stopped: bool,
 }
 
 /// Whether the metainfo marks the torrent private, so only its own trackers
@@ -382,6 +384,11 @@ pub fn collect_rows(session: &Arc<Session>) -> Vec<TorrentRow> {
                     ratio,
                     has_metadata,
                     private: is_private(handle),
+                    stopped: match stats.state {
+                        TorrentStatsState::Initializing { paused } => paused,
+                        TorrentStatsState::Live => false,
+                        TorrentStatsState::Paused | TorrentStatsState::Error => true,
+                    },
                 }
             })
             .collect()

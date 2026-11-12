@@ -29,6 +29,8 @@ export interface TorrentRow {
   tracker_count: number;
   ratio: number;
   has_metadata: boolean;
+  /** Not running, and not about to once a file check is over. */
+  stopped: boolean;
   /** Marked private in its metainfo, so only its own trackers announce it. */
   private: boolean;
 }

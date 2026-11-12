@@ -293,10 +293,8 @@ pub async fn torrent_action(
 pub async fn pause_all_inner(state: &AppState) -> usize {
     let rows = engine::collect_rows(&state.session());
     let mut paused = 0;
-    for row in rows
-        .iter()
-        .filter(|r| matches!(r.state.as_str(), "downloading" | "seeding" | "checking"))
-    {
+    // Pausing one that is already held would break off its file check.
+    for row in rows.iter().filter(|r| !r.stopped) {
         if state.api().api_torrent_action_pause(row.id.into()).await.is_ok() {
             paused += 1;
         }
@@ -305,14 +303,12 @@ pub async fn pause_all_inner(state: &AppState) -> usize {
     paused
 }
 
-/// Starts every paused torrent. The queue takes over again from there.
+/// Starts every torrent that is not running, including ones stopped by an
+/// error. The queue takes over again from there.
 pub async fn resume_all_inner(state: &AppState) -> usize {
     let rows = engine::collect_rows(&state.session());
     let mut started = 0;
-    for row in rows
-        .iter()
-        .filter(|r| matches!(r.state.as_str(), "paused" | "complete"))
-    {
+    for row in rows.iter().filter(|r| r.stopped) {
         if state.api().api_torrent_action_start(row.id.into()).await.is_ok() {
             started += 1;
         }
@@ -2727,6 +2723,46 @@ mod tests {
             assert_ne!(state_of(held), "paused");
             assert_eq!(state_of(mine), "paused");
             assert!(!state.queue_paused.lock().contains(&hash));
+        });
+    }
+
+    /// Resume all starts whatever Pause all stopped, and pausing twice does
+    /// not touch what is already stopped.
+    #[test]
+    fn resume_all_starts_what_pause_all_stopped() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("pause-all", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let one = make_torrent(&root.join("one"), "One", b"first", &[]).await;
+            let two = make_torrent(&root.join("two"), "Two", b"second", &[]).await;
+            add_file_with_defaults(&state, "one".into(), one).await.unwrap();
+            add_file_with_defaults(&state, "two".into(), two).await.unwrap();
+
+            async fn both_downloading(state: &AppState) {
+                let states = || -> Vec<String> {
+                    let rows = engine::collect_rows(&state.session());
+                    rows.into_iter().map(|r| r.state).collect()
+                };
+                for _ in 0..100 {
+                    if states() == ["downloading", "downloading"] {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                panic!("they never started: {:?}", states());
+            }
+
+            both_downloading(&state).await;
+            assert_eq!(pause_all_inner(&state).await, 2);
+            assert!(engine::collect_rows(&state.session()).iter().all(|r| r.stopped));
+            assert_eq!(pause_all_inner(&state).await, 0);
+
+            assert_eq!(resume_all_inner(&state).await, 2);
+            both_downloading(&state).await;
         });
     }
 

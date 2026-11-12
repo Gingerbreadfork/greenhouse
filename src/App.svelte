@@ -240,7 +240,7 @@
     const many = chosen.length > 1;
     const subject = many ? `${chosen.length} torrents` : null;
     const first = chosen[0];
-    const paused = first && (first.state === 'paused' || first.state === 'complete');
+    const paused = first?.stopped;
 
     menu = {
       x: event.clientX,

@@ -26,7 +26,8 @@ export const torrents: TorrentRow[] = [
     tracker_count: 14,
     private: false,
     ratio: 0.11,
-    has_metadata: true
+    has_metadata: true,
+    stopped: false
   },
   {
     id: 2,
@@ -50,7 +51,8 @@ export const torrents: TorrentRow[] = [
     tracker_count: 22,
     private: false,
     ratio: 0.02,
-    has_metadata: true
+    has_metadata: true,
+    stopped: false
   },
   {
     id: 3,
@@ -74,7 +76,8 @@ export const torrents: TorrentRow[] = [
     tracker_count: 14,
     private: false,
     ratio: 4.29,
-    has_metadata: true
+    has_metadata: true,
+    stopped: false
   },
   {
     id: 4,
@@ -98,7 +101,8 @@ export const torrents: TorrentRow[] = [
     tracker_count: 8,
     private: false,
     ratio: 0.41,
-    has_metadata: true
+    has_metadata: true,
+    stopped: false
   },
   {
     id: 5,
@@ -122,7 +126,8 @@ export const torrents: TorrentRow[] = [
     tracker_count: 14,
     private: false,
     ratio: 0,
-    has_metadata: true
+    has_metadata: true,
+    stopped: false
   },
   {
     id: 6,
@@ -146,7 +151,8 @@ export const torrents: TorrentRow[] = [
     tracker_count: 6,
     private: true,
     ratio: 0.02,
-    has_metadata: true
+    has_metadata: true,
+    stopped: true
   },
   {
     id: 7,
@@ -170,7 +176,8 @@ export const torrents: TorrentRow[] = [
     tracker_count: 22,
     private: false,
     ratio: 0,
-    has_metadata: false
+    has_metadata: false,
+    stopped: false
   },
   {
     id: 8,
@@ -194,7 +201,8 @@ export const torrents: TorrentRow[] = [
     tracker_count: 14,
     private: false,
     ratio: 1.42,
-    has_metadata: true
+    has_metadata: true,
+    stopped: true
   },
   {
     id: 9,
@@ -218,7 +226,8 @@ export const torrents: TorrentRow[] = [
     tracker_count: 14,
     private: false,
     ratio: 0.03,
-    has_metadata: true
+    has_metadata: true,
+    stopped: true
   }
 ];
 

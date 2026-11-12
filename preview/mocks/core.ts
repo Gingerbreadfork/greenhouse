@@ -136,7 +136,11 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
       } else if (args?.action === 'pause' || args?.action === 'start') {
         live = live.map((t) =>
           t.id === args?.id
-            ? { ...t, state: args.action === 'pause' ? 'paused' : 'downloading' }
+            ? {
+                ...t,
+                state: args.action === 'pause' ? 'paused' : 'downloading',
+                stopped: args.action === 'pause'
+              }
             : t
         );
       }
