@@ -1,7 +1,8 @@
 //! Adds .torrent files that appear in the watch folder.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use tauri::{Emitter, Manager, Runtime};
@@ -13,25 +14,34 @@ const EVERY: Duration = Duration::from_secs(5);
 /// A file this fresh may still be being written.
 const SETTLE: Duration = Duration::from_secs(2);
 
+/// Files that were dealt with but could not be renamed, as they were then.
+pub type Stuck = HashSet<(PathBuf, Option<SystemTime>)>;
+
 pub fn spawn<R: Runtime>(app: tauri::AppHandle<R>) {
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(EVERY);
+        let mut stuck = Stuck::new();
         loop {
             interval.tick().await;
-            scan(&app, SETTLE).await;
+            scan(&app, SETTLE, &mut stuck).await;
         }
     });
 }
 
 /// Adds every settled .torrent file in the watch folder, then renames it so
-/// it is not picked up again.
-pub async fn scan<R: Runtime>(app: &tauri::AppHandle<R>, settle: Duration) {
+/// it is not picked up again. One that cannot be renamed is remembered.
+pub async fn scan<R: Runtime>(app: &tauri::AppHandle<R>, settle: Duration, stuck: &mut Stuck) {
     let state = app.state::<AppState>();
     let dir = state.settings.read().watch_dir.trim().to_string();
     if dir.is_empty() {
         return;
     }
     for file in torrent_files(Path::new(&dir), settle) {
+        let modified = std::fs::metadata(&file).and_then(|m| m.modified()).ok();
+        let seen = (file.clone(), modified);
+        if stuck.contains(&seen) {
+            continue;
+        }
         let name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
         let added = match tokio::fs::read(&file).await {
             Ok(bytes) => {
@@ -52,7 +62,9 @@ pub async fn scan<R: Runtime>(app: &tauri::AppHandle<R>, settle: Duration) {
                 "failed"
             }
         };
-        let _ = tokio::fs::rename(&file, marked(&file, suffix)).await;
+        if tokio::fs::rename(&file, marked(&file, suffix)).await.is_err() {
+            stuck.insert(seen);
+        }
     }
 }
 

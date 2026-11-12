@@ -3087,9 +3087,11 @@ mod tests {
             let mut added = events(&app, "greenhouse://added");
             let mut failed = events(&app, "greenhouse://add-failed");
 
-            crate::watch::scan(app.handle(), Duration::ZERO).await;
-            crate::watch::scan(app.handle(), Duration::ZERO).await;
+            let mut stuck = crate::watch::Stuck::new();
+            crate::watch::scan(app.handle(), Duration::ZERO, &mut stuck).await;
+            crate::watch::scan(app.handle(), Duration::ZERO, &mut stuck).await;
 
+            assert!(stuck.is_empty());
             assert_eq!(engine::collect_rows(&state.session()).len(), 1);
             assert!(added.try_recv().is_ok());
             assert!(added.try_recv().is_err(), "added twice");
@@ -3103,6 +3105,47 @@ mod tests {
             assert!(watch.join("broken.torrent.failed").exists());
             assert!(!watch.join("hello.torrent").exists());
             assert!(watch.join("notes.txt").exists());
+        });
+    }
+
+    /// A watch folder that cannot be written to does not have its files
+    /// added or reported again on every pass.
+    #[cfg(unix)]
+    #[test]
+    fn a_read_only_watch_folder_is_not_scanned_in_a_loop() {
+        use std::os::unix::fs::PermissionsExt;
+        tauri::async_runtime::block_on(async {
+            let app = test_app("watch-locked", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let watch = root.join("watch");
+            std::fs::create_dir_all(&watch).unwrap();
+            let torrent = make_torrent(&root, "payload", b"some bytes", &[]).await;
+            std::fs::write(watch.join("good.torrent"), &torrent).unwrap();
+            std::fs::write(watch.join("broken.torrent"), b"not a torrent").unwrap();
+            std::fs::set_permissions(&watch, std::fs::Permissions::from_mode(0o555)).unwrap();
+            {
+                let mut settings = state.settings.write();
+                settings.watch_dir = watch.to_string_lossy().into_owned();
+                settings.start_paused = true;
+            }
+            let mut added = events(&app, "greenhouse://added");
+            let mut failed = events(&app, "greenhouse://add-failed");
+
+            let mut stuck = crate::watch::Stuck::new();
+            for _ in 0..3 {
+                crate::watch::scan(app.handle(), Duration::ZERO, &mut stuck).await;
+            }
+            std::fs::set_permissions(&watch, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+            assert!(added.try_recv().is_ok());
+            assert!(added.try_recv().is_err(), "added again");
+            assert!(failed.try_recv().is_ok());
+            assert!(failed.try_recv().is_err(), "reported again");
+            assert_eq!(state.activity.lock().list().len(), 2);
         });
     }
 
