@@ -2984,6 +2984,14 @@ mod tests {
                 engine::torrent_detail(&state.api(), &state.paths, id).unwrap().piece_size
             };
             assert_eq!(size(&state), u64::from(length));
+
+            // The selection cannot be changed until the files have been checked.
+            for _ in 0..100 {
+                if engine::collect_rows(&state.session())[0].state == "paused" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
             set_file_selection(app.state(), id, vec![0]).await.unwrap();
             assert_eq!(size(&state), u64::from(length));
             assert!(set_file_selection(app.state(), id, vec![]).await.is_err());
