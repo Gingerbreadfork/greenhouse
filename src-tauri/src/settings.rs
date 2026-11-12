@@ -268,6 +268,24 @@ pub fn save_pending_moves(path: &Path, moves: &PendingMoves) {
     }
 }
 
+/// Forgets where a torrent was due to be moved, if anywhere.
+pub fn drop_pending_move(path: &Path, info_hash: &str) {
+    let mut moves = load_pending_moves(path);
+    if moves.remove(info_hash).is_some() {
+        save_pending_moves(path, &moves);
+    }
+}
+
+/// Forgets the moves of torrents that are no longer in the list.
+pub fn retain_pending_moves(path: &Path, live: &std::collections::HashSet<&str>) {
+    let mut moves = load_pending_moves(path);
+    let before = moves.len();
+    moves.retain(|hash, _| live.contains(hash.as_str()));
+    if moves.len() != before {
+        save_pending_moves(path, &moves);
+    }
+}
+
 /// Why a move did not finish.
 #[derive(Debug)]
 pub enum MoveFailed {

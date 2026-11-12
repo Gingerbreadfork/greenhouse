@@ -91,6 +91,7 @@ impl Supervisor {
             let live: HashSet<&str> = rows.iter().map(|r| r.info_hash.as_str()).collect();
             state.seeding.lock().retain(&live);
             state.queue_paused.lock().retain(&live);
+            settings::retain_pending_moves(&state.paths.pending_moves_file(), &live);
         }
 
         self.announce_finished(app, state, rows);
@@ -259,11 +260,7 @@ impl Supervisor {
     }
 
     fn clear_pending(&self, state: &AppState, info_hash: &str) {
-        let file = state.paths.pending_moves_file();
-        let mut moves = settings::load_pending_moves(&file);
-        if moves.remove(info_hash).is_some() {
-            settings::save_pending_moves(&file, &moves);
-        }
+        settings::drop_pending_move(&state.paths.pending_moves_file(), info_hash);
     }
 
     pub(crate) async fn enforce_queue(&mut self, state: &AppState, rows: &[TorrentRow]) {

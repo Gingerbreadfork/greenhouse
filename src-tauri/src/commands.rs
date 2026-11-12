@@ -245,6 +245,10 @@ pub async fn torrent_action(
     id: usize,
     action: String,
 ) -> CmdResult<()> {
+    let info_hash = state
+        .session()
+        .get(id.into())
+        .map(|handle| handle.info_hash().as_string());
     match action.as_str() {
         "pause" => state.api().api_torrent_action_pause(id.into()).await.map(|_| ()),
         "start" => state.api().api_torrent_action_start(id.into()).await.map(|_| ()),
@@ -253,13 +257,16 @@ pub async fn torrent_action(
         other => return Err(format!("unknown action: {other}")),
     }
     .map_err(err)?;
-    if action == "pause" {
-        if let Some(handle) = state.session().get(id.into()) {
-            state
-                .queue_paused
-                .lock()
-                .remove(&handle.info_hash().as_string());
+    let Some(info_hash) = info_hash else {
+        return Ok(());
+    };
+    match action.as_str() {
+        "pause" => state.queue_paused.lock().remove(&info_hash),
+        // Nothing is left to move once the torrent is gone for good.
+        "forget" | "delete" => {
+            settings::drop_pending_move(&state.paths.pending_moves_file(), &info_hash)
         }
+        _ => {}
     }
     Ok(())
 }
@@ -1363,11 +1370,17 @@ async fn commit_resolved(
         let _ = tokio::fs::write(path, bytes).await;
     }
     // A torrent that was here already keeps the folder it has.
-    if let Some(destination) = pending_final.filter(|_| !already) {
+    if !already {
         let file = state.paths.pending_moves_file();
-        let mut moves = settings::load_pending_moves(&file);
-        moves.insert(info_hash, destination);
-        settings::save_pending_moves(&file, &moves);
+        match pending_final {
+            Some(destination) => {
+                let mut moves = settings::load_pending_moves(&file);
+                moves.insert(info_hash, destination);
+                settings::save_pending_moves(&file, &moves);
+            }
+            // A move left over from an earlier add would empty the new folder.
+            None => settings::drop_pending_move(&file, &info_hash),
+        }
     }
     state.staged.lock().remove(&request.token);
 
@@ -2489,6 +2502,36 @@ mod tests {
             assert_eq!(second.id, first.id);
             assert_eq!(engine::collect_rows(&state.session()).len(), 1);
             assert!(settings::load_pending_moves(&state.paths.pending_moves_file()).is_empty());
+        });
+    }
+
+    /// A torrent taken out of the incomplete folder and added again without
+    /// one does not keep the old move.
+    #[test]
+    fn a_fresh_add_drops_the_move_left_by_an_earlier_one() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("stale-move", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            {
+                let mut settings = state.settings.write();
+                settings.start_paused = true;
+                settings.incomplete_dir = root.join("partial").to_string_lossy().into_owned();
+            }
+            let torrent = make_torrent(&root, "payload", b"some bytes", &[]).await;
+            let moves = || settings::load_pending_moves(&state.paths.pending_moves_file());
+
+            let added = add_file_with_defaults(&state, "a".into(), torrent.clone()).await.unwrap();
+            assert_eq!(moves().len(), 1);
+            forget_inner(&state, added.id.unwrap()).await.unwrap();
+            assert_eq!(moves().len(), 1, "putting it back still needs the move");
+
+            state.settings.write().incomplete_dir.clear();
+            add_file_with_defaults(&state, "a".into(), torrent).await.unwrap();
+            assert!(moves().is_empty());
         });
     }
 
