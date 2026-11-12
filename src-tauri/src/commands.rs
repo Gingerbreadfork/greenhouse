@@ -297,9 +297,13 @@ pub async fn torrent_action(
     };
     match action.as_str() {
         "pause" => state.queue_paused.lock().remove(&info_hash),
-        // Nothing is left to move once the torrent is gone for good.
+        // Nothing kept for a torrent outlives it once it is gone for good.
         "forget" | "delete" => {
-            settings::drop_pending_move(&state.paths.pending_moves_file(), &info_hash)
+            settings::drop_pending_move(&state.paths.pending_moves_file(), &info_hash);
+            state.queue_paused.lock().remove(&info_hash);
+            if action == "delete" {
+                state.seeding.lock().forget(&info_hash);
+            }
         }
         _ => {}
     }
@@ -2925,6 +2929,40 @@ mod tests {
 
             assert_eq!(resume_all_inner(&state).await, 2);
             both_downloading(&state).await;
+        });
+    }
+
+    /// Deleting a torrent drops what was kept for it, so adding it again
+    /// later starts from nothing.
+    #[test]
+    fn deleting_a_torrent_forgets_what_was_kept_for_it() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("delete", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            {
+                let mut settings = state.settings.write();
+                settings.start_paused = true;
+                settings.incomplete_dir = root.join("partial").to_string_lossy().into_owned();
+            }
+            let torrent = make_torrent(&root, "payload", b"some bytes", &[]).await;
+            let id = add_file_with_defaults(&state, "a".into(), torrent).await.unwrap().id.unwrap();
+            let mut row = engine::collect_rows(&state.session()).remove(0);
+            row.uploaded_bytes = 500;
+            state.seeding.lock().record(&row, 0);
+            state.queue_paused.lock().insert(row.info_hash.clone());
+
+            torrent_action(app.state(), id, "delete".into()).await.unwrap();
+
+            row.uploaded_bytes = 0;
+            let mut rows = [row];
+            state.seeding.lock().overlay(&mut rows);
+            assert_eq!(rows[0].uploaded_bytes, 0);
+            assert!(!state.queue_paused.lock().contains(&rows[0].info_hash));
+            assert!(settings::load_pending_moves(&state.paths.pending_moves_file()).is_empty());
         });
     }
 

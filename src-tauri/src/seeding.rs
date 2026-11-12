@@ -107,6 +107,13 @@ impl SeedLedger {
         self.dirty = true;
     }
 
+    /// Forgets a torrent that has been deleted, so adding it again starts
+    /// from nothing.
+    pub fn forget(&mut self, info_hash: &str) {
+        self.last_seen.remove(info_hash);
+        self.dirty |= self.records.remove(info_hash).is_some();
+    }
+
     /// Forgets torrents that are no longer in the session.
     pub fn retain(&mut self, live: &HashSet<&str>) {
         let before = self.records.len();
