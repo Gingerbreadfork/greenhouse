@@ -508,11 +508,9 @@ pub fn torrent_detail(api: &Api, paths: &Paths, id: usize) -> Result<TorrentDeta
         .collect();
     trackers.sort();
 
-    let piece_size = if details.total_pieces > 0 {
-        stats.total_bytes / details.total_pieces as u64
-    } else {
-        0
-    };
+    let piece_size = handle
+        .with_metadata(|m| u64::from(m.info.info().piece_length))
+        .unwrap_or(0);
 
     let peers = peer_stats_value(api, id);
 

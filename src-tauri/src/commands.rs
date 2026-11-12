@@ -2928,6 +2928,31 @@ mod tests {
         });
     }
 
+    /// The piece size shown is the torrent's own, whatever is selected.
+    #[test]
+    fn piece_size_does_not_depend_on_the_selection() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("piece-size", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            state.settings.write().start_paused = true;
+            let torrent = make_torrent(&root, "payload", &[7u8; 100_000], &[]).await;
+            let length = librqbit::torrent_from_bytes(&torrent).unwrap().info.data.piece_length;
+            let id = add_file_with_defaults(&state, "a".into(), torrent).await.unwrap().id.unwrap();
+
+            let size = |state: &AppState| {
+                engine::torrent_detail(&state.api(), &state.paths, id).unwrap().piece_size
+            };
+            assert_eq!(size(&state), u64::from(length));
+            set_file_selection(app.state(), id, vec![0]).await.unwrap();
+            assert_eq!(size(&state), u64::from(length));
+            assert!(set_file_selection(app.state(), id, vec![]).await.is_err());
+        });
+    }
+
     /// A download that finishes is reported once. A torrent that was already
     /// complete, or was only checked again, is not.
     #[test]
