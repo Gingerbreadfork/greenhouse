@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, Runtime};
@@ -185,7 +185,7 @@ impl Supervisor {
             let Some(destination) = moves.get(&row.info_hash).cloned() else {
                 continue;
             };
-            if PathBuf::from(&row.output_folder) == PathBuf::from(&destination) {
+            if Path::new(&row.output_folder) == Path::new(&destination) {
                 moves.remove(&row.info_hash);
                 continue;
             }

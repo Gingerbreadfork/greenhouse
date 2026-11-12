@@ -631,8 +631,10 @@ mod tests {
     fn the_blocklist_needs_both_a_url_and_a_downloaded_copy() {
         let dir = scratch("source");
         let paths = Paths { config_dir: dir.clone(), data_dir: dir.clone(), dht_file: None };
-        let mut settings = Settings::default();
-        settings.blocklist_url = "https://example.org/list.gz".into();
+        let mut settings = Settings {
+            blocklist_url: "https://example.org/list.gz".into(),
+            ..Default::default()
+        };
         assert_eq!(blocklist_source(&paths, &settings), None);
 
         std::fs::write(paths.blocklist_file(), "x").unwrap();

@@ -270,10 +270,6 @@ impl PendingMoves {
         Self { moves, file }
     }
 
-    pub fn len(&self) -> usize {
-        self.moves.len()
-    }
-
     pub fn is_empty(&self) -> bool {
         self.moves.is_empty()
     }
@@ -496,6 +492,8 @@ pub fn free_space(path: &Path) -> Option<u64> {
         return None;
     }
     let stat = unsafe { stat.assume_init() };
+    // Both are narrower than 64 bits on some systems.
+    #[allow(clippy::unnecessary_cast)]
     Some(stat.f_bavail as u64 * stat.f_frsize as u64)
 }
 
