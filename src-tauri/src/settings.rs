@@ -1,5 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -253,36 +254,58 @@ pub fn modified_secs(path: &Path) -> Option<u64> {
     Some(modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs())
 }
 
-pub type PendingMoves = std::collections::HashMap<String, String>;
-
-pub fn load_pending_moves(path: &Path) -> PendingMoves {
-    std::fs::read(path)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+/// Where each torrent in the incomplete folder goes once it finishes, by
+/// info hash. Kept on disk so a move is still due after a restart.
+pub struct PendingMoves {
+    moves: HashMap<String, String>,
+    file: PathBuf,
 }
 
-pub fn save_pending_moves(path: &Path, moves: &PendingMoves) {
-    if let Ok(json) = serde_json::to_vec_pretty(moves) {
-        let _ = std::fs::write(path, json);
+impl PendingMoves {
+    pub fn load(file: PathBuf) -> Self {
+        let moves = std::fs::read(&file)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        Self { moves, file }
     }
-}
 
-/// Forgets where a torrent was due to be moved, if anywhere.
-pub fn drop_pending_move(path: &Path, info_hash: &str) {
-    let mut moves = load_pending_moves(path);
-    if moves.remove(info_hash).is_some() {
-        save_pending_moves(path, &moves);
+    pub fn len(&self) -> usize {
+        self.moves.len()
     }
-}
 
-/// Forgets the moves of torrents that are no longer in the list.
-pub fn retain_pending_moves(path: &Path, live: &std::collections::HashSet<&str>) {
-    let mut moves = load_pending_moves(path);
-    let before = moves.len();
-    moves.retain(|hash, _| live.contains(hash.as_str()));
-    if moves.len() != before {
-        save_pending_moves(path, &moves);
+    pub fn is_empty(&self) -> bool {
+        self.moves.is_empty()
+    }
+
+    pub fn get(&self, info_hash: &str) -> Option<&String> {
+        self.moves.get(info_hash)
+    }
+
+    pub fn insert(&mut self, info_hash: String, destination: String) {
+        self.moves.insert(info_hash, destination);
+        self.save();
+    }
+
+    pub fn remove(&mut self, info_hash: &str) {
+        if self.moves.remove(info_hash).is_some() {
+            self.save();
+        }
+    }
+
+    /// Forgets the moves of torrents that are no longer in the list.
+    pub fn retain(&mut self, live: &HashSet<&str>) {
+        let before = self.moves.len();
+        self.moves.retain(|hash, _| live.contains(hash.as_str()));
+        if self.moves.len() != before {
+            self.save();
+        }
+    }
+
+    fn save(&self) {
+        if let Ok(json) = serde_json::to_vec_pretty(&self.moves) {
+            let _ = std::fs::write(&self.file, json);
+        }
     }
 }
 

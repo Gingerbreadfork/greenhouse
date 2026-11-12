@@ -106,6 +106,7 @@ pub fn run() {
             let activity = activity::ActivityLog::load(paths.activity_file());
             let stream = tauri::async_runtime::block_on(stream::start(engine.clone())).ok();
             let queue_paused = supervisor::QueueHolds::load(paths.queue_paused_file());
+            let pending_moves = settings::PendingMoves::load(paths.pending_moves_file());
 
             app.manage(AppState {
                 engine,
@@ -118,6 +119,7 @@ pub fn run() {
                 feeds: Mutex::new(feeds),
                 queue_paused: Mutex::new(queue_paused),
                 queue_gate: tokio::sync::Mutex::new(()),
+                pending_moves: Mutex::new(pending_moves),
                 moving: Mutex::new(HashMap::new()),
                 activity: Mutex::new(activity),
                 stream,

@@ -88,7 +88,7 @@ impl Supervisor {
             let live: HashSet<&str> = rows.iter().map(|r| r.info_hash.as_str()).collect();
             state.seeding.lock().retain(&live);
             state.queue_paused.lock().retain(&live);
-            settings::retain_pending_moves(&state.paths.pending_moves_file(), &live);
+            state.pending_moves.lock().retain(&live);
         }
 
         self.announce_finished(app, state, rows);
@@ -176,18 +176,17 @@ impl Supervisor {
         state: &AppState,
         rows: &[TorrentRow],
     ) {
-        let file = state.paths.pending_moves_file();
-        let moves = settings::load_pending_moves(&file);
+        let mut moves = state.pending_moves.lock();
         if moves.is_empty() {
             return;
         }
 
         for row in rows.iter().filter(|r| r.finished && r.has_metadata) {
-            let Some(destination) = moves.get(&row.info_hash) else {
+            let Some(destination) = moves.get(&row.info_hash).cloned() else {
                 continue;
             };
-            if PathBuf::from(&row.output_folder) == PathBuf::from(destination) {
-                settings::drop_pending_move(&file, &row.info_hash);
+            if PathBuf::from(&row.output_folder) == PathBuf::from(&destination) {
+                moves.remove(&row.info_hash);
                 continue;
             }
             let shown = TorrentRow {
@@ -315,7 +314,7 @@ async fn move_one<R: Runtime>(app: AppHandle<R>, row: TorrentRow, destination: S
         }
     };
 
-    settings::drop_pending_move(&state.paths.pending_moves_file(), &row.info_hash);
+    state.pending_moves.lock().remove(&row.info_hash);
     let mut retrying = false;
     while let Err(e) = restore_inner(&state, restore.clone()).await {
         if !retrying {

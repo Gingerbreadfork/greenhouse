@@ -36,6 +36,7 @@ pub struct AppState {
     /// Held while every torrent is being paused, so the queue does not start
     /// one of them in the middle of it.
     pub queue_gate: tokio::sync::Mutex<()>,
+    pub pending_moves: Mutex<settings::PendingMoves>,
     /// Finished torrents that are out of the session while their files are
     /// moved, by info hash, as they were last seen.
     pub moving: Mutex<HashMap<String, TorrentRow>>,
@@ -299,7 +300,7 @@ pub async fn torrent_action(
         "pause" => state.queue_paused.lock().remove(&info_hash),
         // Nothing kept for a torrent outlives it once it is gone for good.
         "forget" | "delete" => {
-            settings::drop_pending_move(&state.paths.pending_moves_file(), &info_hash);
+            state.pending_moves.lock().remove(&info_hash);
             state.queue_paused.lock().remove(&info_hash);
             if action == "delete" {
                 state.seeding.lock().forget(&info_hash);
@@ -1447,15 +1448,11 @@ async fn commit_resolved(
     }
     // A torrent that was here already keeps the folder it has.
     if !already {
-        let file = state.paths.pending_moves_file();
+        let mut moves = state.pending_moves.lock();
         match pending_final {
-            Some(destination) => {
-                let mut moves = settings::load_pending_moves(&file);
-                moves.insert(info_hash, destination);
-                settings::save_pending_moves(&file, &moves);
-            }
+            Some(destination) => moves.insert(info_hash, destination),
             // A move left over from an earlier add would empty the new folder.
-            None => settings::drop_pending_move(&file, &info_hash),
+            None => moves.remove(&info_hash),
         }
     }
     state.staged.lock().remove(&request.token);
@@ -1999,6 +1996,7 @@ mod tests {
             dht_file: Some(root.join("dht.json")),
         };
         std::fs::create_dir_all(paths.data_dir.join("sources")).unwrap();
+        let pending_moves = settings::PendingMoves::load(paths.pending_moves_file());
 
         let app = tauri::test::mock_app();
         let running = engine::Running::new(
@@ -2022,6 +2020,7 @@ mod tests {
             feeds: Mutex::new(FeedsState::default()),
             queue_paused: Mutex::new(QueueHolds::load(root.join("queue-paused.json"))),
             queue_gate: tokio::sync::Mutex::new(()),
+            pending_moves: Mutex::new(pending_moves),
             moving: Mutex::new(HashMap::new()),
             activity: Mutex::new(ActivityLog::load(root.join("activity.json"))),
             stream: None,
@@ -2660,7 +2659,7 @@ mod tests {
             assert!(second.already);
             assert_eq!(second.id, first.id);
             assert_eq!(engine::collect_rows(&state.session()).len(), 1);
-            assert!(settings::load_pending_moves(&state.paths.pending_moves_file()).is_empty());
+            assert!(state.pending_moves.lock().is_empty());
         });
     }
 
@@ -2681,7 +2680,7 @@ mod tests {
                 settings.incomplete_dir = root.join("partial").to_string_lossy().into_owned();
             }
             let torrent = make_torrent(&root, "payload", b"some bytes", &[]).await;
-            let moves = || settings::load_pending_moves(&state.paths.pending_moves_file());
+            let moves = || state.pending_moves.lock();
 
             let added = add_file_with_defaults(&state, "a".into(), torrent.clone()).await.unwrap();
             assert_eq!(moves().len(), 1);
@@ -2962,7 +2961,7 @@ mod tests {
             state.seeding.lock().overlay(&mut rows);
             assert_eq!(rows[0].uploaded_bytes, 0);
             assert!(!state.queue_paused.lock().contains(&rows[0].info_hash));
-            assert!(settings::load_pending_moves(&state.paths.pending_moves_file()).is_empty());
+            assert!(state.pending_moves.lock().is_empty());
         });
     }
 
@@ -3108,7 +3107,7 @@ mod tests {
             assert_eq!(PathBuf::from(&last[0].output_folder), destination);
             assert!(destination.join("a.bin").exists() && destination.join("b.bin").exists());
             assert!(!staging.exists());
-            assert!(settings::load_pending_moves(&state.paths.pending_moves_file()).is_empty());
+            assert!(state.pending_moves.lock().is_empty());
         });
     }
 
