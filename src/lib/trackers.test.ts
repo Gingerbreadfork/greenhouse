@@ -1,5 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { parseTrackerBlob, uniqueTrackers } from './trackers';
+import { bulkSummary, parseTrackerBlob, uniqueTrackers } from './trackers';
+
+describe('bulkSummary', () => {
+  const none = { changed: 0, unchanged: 0, skipped_private: 0, failed: 0, error: null };
+
+  it('says how many torrents were changed', () => {
+    expect(bulkSummary({ ...none, changed: 1 })).toEqual({
+      text: 'Trackers added to 1 torrent',
+      tone: 'good',
+      detail: undefined
+    });
+  });
+
+  it('does not let one success hide the failures', () => {
+    const said = bulkSummary({
+      changed: 1,
+      unchanged: 2,
+      skipped_private: 1,
+      failed: 3,
+      error: 'no longer in the session'
+    });
+    expect(said.tone).toBe('bad');
+    expect(said.detail).toBe(
+      '2 torrents already had them · 1 private torrent keeps its own trackers · ' +
+        '3 torrents could not be changed: no longer in the session'
+    );
+  });
+});
 
 describe('parseTrackerBlob', () => {
   it('keeps tracker URLs and drops comments, other schemes and duplicates', () => {

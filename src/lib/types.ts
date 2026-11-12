@@ -277,6 +277,12 @@ export interface ApplyTrackersResult {
 
 export interface BulkApplyResult {
   changed: number;
+  /** Torrents that had every one of the trackers already. */
+  unchanged: number;
   /** Private torrents, which keep their own trackers. */
   skipped_private: number;
+  /** Torrents the trackers could not be added to. */
+  failed: number;
+  /** Why the last of those failed. */
+  error: string | null;
 }

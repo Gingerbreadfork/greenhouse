@@ -1,3 +1,5 @@
+import type { BulkApplyResult } from './types';
+
 const SCHEMES = ['http://', 'https://', 'udp://', 'ws://', 'wss://'];
 
 /** Mirrors the engine-side parser so the add sheet can count as you type. */
@@ -14,6 +16,29 @@ export function parseTrackerBlob(blob: string): string[] {
     out.push(line);
   }
   return out;
+}
+
+/** What to tell someone after adding trackers to several torrents at once. */
+export function bulkSummary(result: BulkApplyResult): {
+  text: string;
+  tone: 'good' | 'bad';
+  detail?: string;
+} {
+  const torrents = (n: number) => (n === 1 ? '1 torrent' : `${n} torrents`);
+  const notes: string[] = [];
+  if (result.unchanged > 0) notes.push(`${torrents(result.unchanged)} already had them`);
+  if (result.skipped_private > 0) {
+    const keep = result.skipped_private === 1 ? 'torrent keeps its' : 'torrents keep their';
+    notes.push(`${result.skipped_private} private ${keep} own trackers`);
+  }
+  if (result.failed > 0) {
+    notes.push(`${torrents(result.failed)} could not be changed: ${result.error ?? 'no reason given'}`);
+  }
+  return {
+    text: `Trackers added to ${torrents(result.changed)}`,
+    tone: result.failed > 0 ? 'bad' : 'good',
+    detail: notes.length > 0 ? notes.join(' · ') : undefined
+  };
 }
 
 export function uniqueTrackers(...lists: string[][]): string[] {

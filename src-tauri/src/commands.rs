@@ -1553,6 +1553,14 @@ async fn apply_trackers_inner(
     } else {
         torrentsrc::merge_trackers(&[&existing, &trackers])
     };
+    // Adding it again checks every file again, so not without a reason.
+    if same_trackers(&merged, &existing) {
+        return Ok(ApplyTrackersResult {
+            id,
+            tracker_count: existing.len(),
+            added: 0,
+        });
+    }
 
     let bytes: Option<Bytes> = handle
         .metadata
@@ -1602,6 +1610,19 @@ async fn apply_trackers_inner(
     })
 }
 
+/// Whether two lists name the same trackers, however each is written.
+fn same_trackers(a: &[String], b: &[String]) -> bool {
+    let set = |list: &[String]| -> HashSet<String> {
+        list.iter()
+            .map(|t| match url::Url::parse(t.trim()) {
+                Ok(url) => String::from(url).to_ascii_lowercase(),
+                Err(_) => t.trim().to_ascii_lowercase(),
+            })
+            .collect()
+    };
+    set(a) == set(b)
+}
+
 /// Adds a torrent that announces to exactly `trackers`, from its file when
 /// there is one and from a magnet link otherwise.
 async fn attach(
@@ -1648,8 +1669,14 @@ fn magnet_for(info_hash: &str, name: Option<&str>, trackers: &[String]) -> Strin
 #[derive(Serialize, Clone)]
 pub struct BulkApplyResult {
     pub changed: usize,
+    /// Torrents that had every one of the trackers already.
+    pub unchanged: usize,
     /// Private torrents, which are left with their own trackers.
     pub skipped_private: usize,
+    /// Torrents the trackers could not be added to.
+    pub failed: usize,
+    /// Why the last of those failed.
+    pub error: Option<String>,
 }
 
 /// Bulk-applies the current tracker selection to every torrent in the session.
@@ -1680,29 +1707,35 @@ async fn apply_to_each(
     ids: Vec<usize>,
     trackers: Vec<String>,
 ) -> CmdResult<BulkApplyResult> {
-    let mut changed = 0usize;
-    let mut skipped_private = 0usize;
-    let mut last_error = None;
+    let mut result = BulkApplyResult {
+        changed: 0,
+        unchanged: 0,
+        skipped_private: 0,
+        failed: 0,
+        error: None,
+    };
     for id in ids {
         if state
             .session()
             .get(id.into())
             .is_some_and(|h| engine::is_private(&h))
         {
-            skipped_private += 1;
+            result.skipped_private += 1;
             continue;
         }
         match apply_trackers_inner(state, id, trackers.clone(), false).await {
-            Ok(_) => changed += 1,
-            Err(e) => last_error = Some(e),
+            Ok(applied) if applied.added == 0 => result.unchanged += 1,
+            Ok(_) => result.changed += 1,
+            Err(e) => {
+                result.failed += 1;
+                result.error = Some(e);
+            }
         }
     }
-    match last_error {
-        Some(e) if changed == 0 && skipped_private == 0 => Err(e),
-        _ => Ok(BulkApplyResult {
-            changed,
-            skipped_private,
-        }),
+    let nothing_else = result.changed + result.unchanged + result.skipped_private == 0;
+    match result.error.clone() {
+        Some(e) if nothing_else => Err(e),
+        _ => Ok(result),
     }
 }
 
@@ -2684,6 +2717,41 @@ mod tests {
 
             restart_engine_with(app.handle(), &state, build).await.unwrap();
             assert_eq!(trackers_of(&state, applied.id), vec![fresh]);
+        });
+    }
+
+    /// Adding trackers to several torrents says which ones failed, and leaves
+    /// alone the ones that have them already.
+    #[test]
+    fn bulk_trackers_count_failures_and_skip_what_is_unchanged() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("bulk-trackers", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            state.settings.write().start_paused = true;
+            let tracker = "udp://pack.example:2/announce";
+            let has = make_torrent(&root.join("one"), "One", b"first", &[tracker]).await;
+            let lacks = make_torrent(&root.join("two"), "Two", b"second", &[]).await;
+            let has = add_file_with_defaults(&state, "one".into(), has).await.unwrap().id.unwrap();
+            let lacks = add_file_with_defaults(&state, "two".into(), lacks).await.unwrap().id.unwrap();
+
+            let result = apply_to_each(&state, vec![has, lacks, 999], vec![tracker.to_uppercase()])
+                .await
+                .unwrap();
+
+            assert_eq!((result.changed, result.unchanged, result.failed), (1, 1, 1));
+            assert!(result.error.unwrap().contains("no longer"));
+            assert!(state.session().get(has.into()).is_some(), "it was added again for nothing");
+            let rows = engine::collect_rows(&state.session());
+            assert!(rows.iter().all(|r| r.tracker_count == 1));
+
+            let Err(error) = apply_to_each(&state, vec![999], vec![tracker.into()]).await else {
+                panic!("a failure was reported as a success");
+            };
+            assert!(error.contains("no longer"));
         });
     }
 

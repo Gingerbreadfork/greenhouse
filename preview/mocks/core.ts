@@ -106,9 +106,15 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
     case 'apply_trackers':
       return { id: args?.id, tracker_count: 20, added: 6 } as T;
     case 'apply_trackers_to_all':
-      return { changed: live.length, skipped_private: 0 } as T;
+      return { changed: live.length, unchanged: 0, skipped_private: 0, failed: 0, error: null } as T;
     case 'apply_trackers_many':
-      return { changed: args?.ids?.length ?? 0, skipped_private: 0 } as T;
+      return {
+        changed: args?.ids?.length ?? 0,
+        unchanged: 0,
+        skipped_private: 0,
+        failed: 0,
+        error: null
+      } as T;
     case 'pause_all':
     case 'resume_all':
       return live.length as T;

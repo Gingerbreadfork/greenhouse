@@ -4,7 +4,7 @@
   import Icon from './Icon.svelte';
   import { api } from '../api';
   import { store } from '../store.svelte';
-  import { parseTrackerBlob, uniqueTrackers } from '../trackers';
+  import { bulkSummary, parseTrackerBlob, uniqueTrackers } from '../trackers';
   import type { TorrentRow } from '../types';
 
   let {
@@ -35,19 +35,13 @@
   async function apply() {
     applying = true;
     try {
-      const { changed, skipped_private } = await api.applyTrackersMany(
-        torrents.map((t) => t.id),
-        trackers
+      const said = bulkSummary(
+        await api.applyTrackersMany(
+          torrents.map((t) => t.id),
+          trackers
+        )
       );
-      store.toast(
-        changed === 1
-          ? `Trackers added to 1 torrent`
-          : `Trackers added to ${changed} torrents`,
-        'good',
-        skipped_private > 0
-          ? `${trackers.length} trackers applied · ${skipped_private} private ${skipped_private === 1 ? 'torrent' : 'torrents'} left alone`
-          : `${trackers.length} trackers applied`
-      );
+      store.toast(said.text, said.tone, said.detail);
       onclose();
     } catch (e) {
       store.toast('Could not add those trackers', 'bad', String(e));

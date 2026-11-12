@@ -3,7 +3,7 @@
   import Switch from './Switch.svelte';
   import { api } from '../api';
   import { store } from '../store.svelte';
-  import { parseTrackerBlob, uniqueTrackers } from '../trackers';
+  import { bulkSummary, parseTrackerBlob, uniqueTrackers } from '../trackers';
   import { trackerHost } from '../format';
   import type { TrackerPack } from '../types';
 
@@ -81,14 +81,8 @@
     }
     busy = label;
     try {
-      const { changed, skipped_private } = await api.applyTrackersToAll(list);
-      store.toast(
-        changed === 1 ? 'Trackers added to 1 torrent' : `Trackers added to ${changed} torrents`,
-        'good',
-        skipped_private > 0
-          ? `${skipped_private} private ${skipped_private === 1 ? 'torrent keeps' : 'torrents keep'} their own trackers`
-          : undefined
-      );
+      const said = bulkSummary(await api.applyTrackersToAll(list));
+      store.toast(said.text, said.tone, said.detail);
     } catch (e) {
       store.toast('Could not apply the trackers', 'bad', String(e));
     } finally {
