@@ -366,12 +366,35 @@ class Store {
     root.dataset.density = s.compact ? 'compact' : 'roomy';
   }
 
-  async patchSettings(patch: Partial<Settings>) {
-    if (!this.settings) return;
-    const next = { ...this.settings, ...patch };
-    this.settings = await api.saveSettings(next);
+  /** The settings change being saved, which the next one waits for. */
+  private saving: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Changes some settings and says whether they were saved. Changes are saved
+   * one after another, so one made while another is on its way is not lost.
+   * A change that cannot be saved is undone and reported.
+   */
+  patchSettings(patch: Partial<Settings>, what = 'that setting'): Promise<boolean> {
+    const done = this.saving.then(() => this.savePatch(patch, what));
+    this.saving = done.catch(() => {});
+    return done;
+  }
+
+  private async savePatch(patch: Partial<Settings>, what: string): Promise<boolean> {
+    const before = this.settings;
+    if (!before) return false;
+    // Shown at once, and put back if the save fails.
+    this.settings = { ...before, ...patch };
+    try {
+      this.settings = await api.saveSettings(this.settings);
+    } catch (e) {
+      this.settings = before;
+      this.toast(`Could not save ${what}`, 'bad', String(e));
+      return false;
+    }
     this.applyChrome();
     if ('check_updates' in patch) this.scheduleUpdateChecks();
+    return true;
   }
 
   toast(

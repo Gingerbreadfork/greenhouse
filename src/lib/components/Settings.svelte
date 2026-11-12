@@ -84,8 +84,7 @@
   }
 
   async function setBlocklistUrl(url: string) {
-    await store.patchSettings({ blocklist_url: url.trim() });
-    await updateBlocklist();
+    if (await store.patchSettings({ blocklist_url: url.trim() })) await updateBlocklist();
   }
 
   /** The saved interface stays selectable even while it is unplugged. */

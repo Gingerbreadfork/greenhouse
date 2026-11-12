@@ -24,8 +24,8 @@
     .then((all) => (status = all))
     .catch(() => {});
 
-  async function writeFeeds(next: Feed[]) {
-    await store.patchSettings({ feeds: next });
+  function writeFeeds(next: Feed[]) {
+    return store.patchSettings({ feeds: next }, 'that feed');
   }
 
   function update(id: string, patch: Partial<Feed>) {
@@ -45,8 +45,7 @@
       episode_filter: false,
       download_dir: ''
     };
-    await writeFeeds([...feeds, feed]);
-    openEditor(feed);
+    if (await writeFeeds([...feeds, feed])) openEditor(feed);
   }
 
   function removeFeed(id: string) {
@@ -72,12 +71,7 @@
       must_match: draft.must_match.trim(),
       must_not_match: draft.must_not_match.trim()
     };
-    try {
-      await update(saved.id, saved);
-    } catch (e) {
-      store.toast('Could not save that feed', 'bad', String(e));
-      return;
-    }
+    if (!(await update(saved.id, saved))) return;
     closeEditor();
     if (saved.url) check(saved.id);
   }

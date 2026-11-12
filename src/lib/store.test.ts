@@ -1,5 +1,6 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import pkg from '../../package.json';
+import { api } from './api';
 import { store } from './store.svelte';
 import { restarts } from '../../preview/mocks/process';
 import { installed, offer } from '../../preview/mocks/updater';
@@ -21,6 +22,25 @@ describe('store', () => {
     expect(store.settings?.accent).toBe('brass');
     expect(document.documentElement.dataset.accent).toBe('brass');
     expect(document.documentElement.dataset.density).toBe('compact');
+  });
+
+  it('keeps both of two settings changed in quick succession', async () => {
+    const first = store.patchSettings({ compact: false });
+    const second = store.patchSettings({ accent: 'glass' });
+    await Promise.all([first, second]);
+    expect(store.settings?.compact).toBe(false);
+    expect(store.settings?.accent).toBe('glass');
+  });
+
+  it('undoes and reports a setting that could not be saved', async () => {
+    const save = vi.spyOn(api, 'saveSettings').mockRejectedValueOnce('the disk is full');
+    const saved = await store.patchSettings({ accent: 'brass' });
+    save.mockRestore();
+
+    expect(saved).toBe(false);
+    expect(store.settings?.accent).toBe('glass');
+    expect(store.toasts.at(-1)?.text).toBe('Could not save that setting');
+    expect(store.toasts.at(-1)?.detail).toBe('the disk is full');
   });
 });
 
