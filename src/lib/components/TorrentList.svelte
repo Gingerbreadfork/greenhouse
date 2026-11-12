@@ -76,6 +76,9 @@
 
   function onGridKey(event: KeyboardEvent) {
     const cursorTorrent = store.selected;
+    // A focused button in a row answers Enter and Space itself.
+    const onButton = event.target instanceof Element && event.target.closest('button') !== null;
+    if (onButton && (event.key === 'Enter' || event.key === ' ')) return;
 
     switch (event.key) {
       case 'ArrowDown':
