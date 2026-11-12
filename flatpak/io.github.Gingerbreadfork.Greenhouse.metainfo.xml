@@ -94,6 +94,11 @@
   </keywords>
 
   <releases>
+    <release version="0.5.0" date="2026-11-12">
+      <description>
+        <p>Feed checks and blocklist downloads now go through the network interface you tie Greenhouse to, like the torrents do. Moving a finished download no longer freezes the list, a torrent stopped by an error can be resumed, and the queue no longer leaves a torrent stuck on checking files. Changing a feed's address no longer downloads its backlog, a taken port no longer stops Greenhouse from starting, and a settings file with a mistake in it is kept instead of being replaced.</p>
+      </description>
+    </release>
     <release version="0.4.5" date="2026-11-07">
       <description>
         <p>Tracker changes now last through a restart and can remove a torrent's own trackers. Finished downloads that cannot be moved are no longer left split between folders, torrents with the same name get separate incomplete folders, and the queue picks up where it left off after a relaunch. Several torrent files can be opened at once, and a torrent made only of skipped file types is no longer downloaded in full.</p>
