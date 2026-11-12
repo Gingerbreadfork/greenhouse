@@ -33,6 +33,9 @@ pub struct AppState {
     pub feeds: Mutex<FeedsState>,
     /// Torrents the queue paused, so ones you paused yourself are left alone.
     pub queue_paused: Mutex<QueueHolds>,
+    /// Held while every torrent is being paused, so the queue does not start
+    /// one of them in the middle of it.
+    pub queue_gate: tokio::sync::Mutex<()>,
     /// Finished torrents that are out of the session while their files are
     /// moved, by info hash, as they were last seen.
     pub moving: Mutex<HashMap<String, TorrentRow>>,
@@ -296,6 +299,7 @@ pub async fn torrent_action(
 
 /// Pauses every running torrent, as if you had paused each one yourself.
 pub async fn pause_all_inner(state: &AppState) -> usize {
+    let _queue = state.queue_gate.lock().await;
     let rows = engine::collect_rows(&state.session());
     let mut paused = 0;
     // Pausing one that is already held would break off its file check.
@@ -2004,6 +2008,7 @@ mod tests {
             seeding: Mutex::new(SeedLedger::default()),
             feeds: Mutex::new(FeedsState::default()),
             queue_paused: Mutex::new(QueueHolds::load(root.join("queue-paused.json"))),
+            queue_gate: tokio::sync::Mutex::new(()),
             moving: Mutex::new(HashMap::new()),
             activity: Mutex::new(ActivityLog::load(root.join("activity.json"))),
             stream: None,
@@ -2846,7 +2851,14 @@ mod tests {
             }
 
             let rows = engine::collect_rows(&state.session());
-            crate::supervisor::Supervisor::default().enforce_queue(&state, &rows).await;
+            let mut supervisor = crate::supervisor::Supervisor::default();
+            // Nothing is started while everything is being paused.
+            {
+                let _pausing = state.queue_gate.lock().await;
+                supervisor.enforce_queue(&state, &rows).await;
+                assert_eq!(state_of(held), "paused");
+            }
+            supervisor.enforce_queue(&state, &rows).await;
 
             assert_ne!(state_of(held), "paused");
             assert_eq!(state_of(mine), "paused");

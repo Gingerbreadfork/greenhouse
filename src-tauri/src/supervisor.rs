@@ -206,6 +206,9 @@ impl Supervisor {
     }
 
     pub(crate) async fn enforce_queue(&mut self, state: &AppState, rows: &[TorrentRow]) {
+        let Ok(_gate) = state.queue_gate.try_lock() else {
+            return;
+        };
         // No limit still starts whatever an earlier limit was holding back.
         let (max_down, max_seed) = {
             let settings = state.settings.read();

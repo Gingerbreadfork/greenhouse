@@ -117,6 +117,7 @@ pub fn run() {
                 seeding: Mutex::new(seeding),
                 feeds: Mutex::new(feeds),
                 queue_paused: Mutex::new(queue_paused),
+                queue_gate: tokio::sync::Mutex::new(()),
                 moving: Mutex::new(HashMap::new()),
                 activity: Mutex::new(activity),
                 stream,
