@@ -1306,7 +1306,7 @@ fn trackers_for(settings: &Settings, staged: &Staged, request: &CommitRequest) -
         return torrentsrc::merge_trackers(&[&staged.trackers]);
     }
     let auto = if request.use_auto_packs {
-        settings.active_trackers()
+        settings.pack_trackers()
     } else {
         Vec::new()
     };
@@ -2009,6 +2009,19 @@ mod tests {
             ..staged
         };
         assert!(trackers_for(&settings, &public, &request).len() > own.len());
+    }
+
+    /// Packs ticked in the add sheet are attached even when they are not
+    /// attached to every new torrent.
+    #[test]
+    fn packs_ticked_in_the_add_sheet_are_attached() {
+        let settings = Settings { auto_apply_trackers: false, ..Default::default() };
+        let staged = staged_file(Vec::new());
+        let ticked = CommitRequest { use_auto_packs: true, ..commit_request("t") };
+
+        assert!(!trackers_for(&settings, &staged, &ticked).is_empty());
+        assert!(trackers_for(&settings, &staged, &commit_request("t")).is_empty());
+        assert!(settings.active_trackers().is_empty());
     }
 
     fn commit_request(token: &str) -> CommitRequest {

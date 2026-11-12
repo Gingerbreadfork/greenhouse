@@ -386,23 +386,35 @@ pub fn save(path: &Path, settings: &Settings) -> Result<()> {
     Ok(())
 }
 
-impl Settings {
-    /// Every tracker from every enabled pack, de-duplicated, order preserved.
-    pub fn active_trackers(&self) -> Vec<String> {
-        let mut seen = std::collections::HashSet::new();
-        let mut out = Vec::new();
-        if !self.auto_apply_trackers {
-            return out;
-        }
-        for pack in self.packs.iter().filter(|p| p.enabled) {
-            for t in &pack.trackers {
-                let t = t.trim();
-                if !t.is_empty() && seen.insert(t.to_ascii_lowercase()) {
-                    out.push(t.to_string());
-                }
+/// Every tracker in these packs, de-duplicated, order preserved.
+fn trackers_of<'a>(packs: impl Iterator<Item = &'a TrackerPack>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for pack in packs {
+        for t in &pack.trackers {
+            let t = t.trim();
+            if !t.is_empty() && seen.insert(t.to_ascii_lowercase()) {
+                out.push(t.to_string());
             }
         }
-        out
+    }
+    out
+}
+
+impl Settings {
+    /// The trackers of every enabled pack.
+    pub fn pack_trackers(&self) -> Vec<String> {
+        trackers_of(self.packs.iter().filter(|p| p.enabled))
+    }
+
+    /// The trackers attached to a new torrent without being asked for: the
+    /// enabled packs, or none when that is switched off.
+    pub fn active_trackers(&self) -> Vec<String> {
+        if self.auto_apply_trackers {
+            self.pack_trackers()
+        } else {
+            Vec::new()
+        }
     }
 
     /// True when this filename's extension is one the user skips by default.
@@ -420,17 +432,7 @@ impl Settings {
     }
 
     pub fn trackers_in_packs(&self, ids: &[String]) -> Vec<String> {
-        let mut seen = std::collections::HashSet::new();
-        let mut out = Vec::new();
-        for pack in self.packs.iter().filter(|p| ids.contains(&p.id)) {
-            for t in &pack.trackers {
-                let t = t.trim();
-                if !t.is_empty() && seen.insert(t.to_ascii_lowercase()) {
-                    out.push(t.to_string());
-                }
-            }
-        }
-        out
+        trackers_of(self.packs.iter().filter(|p| ids.contains(&p.id)))
     }
 }
 
