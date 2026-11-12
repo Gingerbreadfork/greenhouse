@@ -44,7 +44,7 @@ impl SeedLedger {
             return;
         }
         if let Ok(text) = serde_json::to_string(&self.records) {
-            if std::fs::write(file, text).is_ok() {
+            if crate::settings::write_atomic(file, text).is_ok() {
                 self.dirty = false;
             }
         }

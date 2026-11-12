@@ -59,7 +59,7 @@ impl QueueHolds {
 
     fn save(&self) {
         if let Ok(json) = serde_json::to_vec(&self.held) {
-            let _ = std::fs::write(&self.file, json);
+            let _ = settings::write_atomic(&self.file, json);
         }
     }
 }

@@ -273,7 +273,7 @@ impl FeedsState {
 
     fn save(&self, file: &Path) {
         if let Ok(text) = serde_json::to_string(&self.seen) {
-            let _ = std::fs::write(file, text);
+            let _ = crate::settings::write_atomic(file, text);
         }
     }
 

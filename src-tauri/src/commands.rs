@@ -1162,7 +1162,7 @@ fn save_queue(state: &AppState) {
         })
         .collect();
     if let Ok(text) = serde_json::to_string(&records) {
-        let _ = std::fs::write(state.paths.queued_file(), text);
+        let _ = settings::write_atomic(&state.paths.queued_file(), text);
     }
 }
 

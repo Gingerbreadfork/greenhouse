@@ -39,7 +39,7 @@ impl ActivityLog {
 
     fn save(&self) {
         if let Ok(text) = serde_json::to_string(&self.entries) {
-            let _ = std::fs::write(&self.file, text);
+            let _ = crate::settings::write_atomic(&self.file, text);
         }
     }
 

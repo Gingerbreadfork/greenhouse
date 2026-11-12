@@ -304,7 +304,7 @@ impl PendingMoves {
 
     fn save(&self) {
         if let Ok(json) = serde_json::to_vec_pretty(&self.moves) {
-            let _ = std::fs::write(&self.file, json);
+            let _ = write_atomic(&self.file, json);
         }
     }
 }
@@ -421,11 +421,17 @@ pub fn load(path: &Path) -> (Settings, Option<String>) {
 }
 
 pub fn save(path: &Path, settings: &Settings) -> Result<()> {
-    let json = serde_json::to_vec_pretty(settings)?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(&tmp, path)?;
+    write_atomic(path, serde_json::to_vec_pretty(settings)?)?;
     Ok(())
+}
+
+/// Writes a file through a temporary one beside it, so being cut off partway
+/// leaves the old contents whole.
+pub fn write_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
+    let mut tmp = path.as_os_str().to_os_string();
+    tmp.push(".tmp");
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, path)
 }
 
 /// Every tracker in these packs, de-duplicated, order preserved.
