@@ -87,7 +87,7 @@ pub fn run() {
             activation::take_launch_token();
 
             let paths = Paths::resolve();
-            let loaded = settings::load(&paths.settings_file());
+            let (loaded, settings_problem) = settings::load(&paths.settings_file());
             // Write the defaults out on first run so the file is there to edit.
             if !paths.settings_file().exists() {
                 let _ = settings::save(&paths.settings_file(), &loaded);
@@ -121,6 +121,7 @@ pub fn run() {
                 activity: Mutex::new(activity),
                 stream,
                 startup_warnings,
+                settings_problem,
             });
 
             background::sync_tray(app.handle(), background::keeps_running(app.handle()));

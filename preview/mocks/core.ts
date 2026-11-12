@@ -23,6 +23,7 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
         platform: 'linux',
         bound_interface: null,
         warnings: [],
+        settings_problem: null,
         self_updates: true
       } as T;
     case 'activity_list':

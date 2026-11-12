@@ -143,6 +143,8 @@ export interface Bootstrap {
   /** The interface traffic is tied to for this run, if any. */
   bound_interface: string | null;
   warnings: string[];
+  /** Why the saved settings were not used, when they could not be read. */
+  settings_problem: string | null;
   /** False when a store such as Flathub updates Greenhouse instead. */
   self_updates: boolean;
 }

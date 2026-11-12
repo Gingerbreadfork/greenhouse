@@ -40,6 +40,8 @@ pub struct AppState {
     /// Serves files to a media player while they download.
     pub stream: Option<StreamServer>,
     pub startup_warnings: Vec<String>,
+    /// Why the saved settings were not used, when they could not be read.
+    pub settings_problem: Option<String>,
 }
 
 impl AppState {
@@ -161,6 +163,8 @@ pub struct Bootstrap {
     pub platform: &'static str,
     pub bound_interface: Option<String>,
     pub warnings: Vec<String>,
+    /// Why the saved settings were not used, when they could not be read.
+    pub settings_problem: Option<String>,
     /// Whether Greenhouse updates itself, rather than a store updating it.
     pub self_updates: bool,
 }
@@ -178,6 +182,7 @@ pub fn bootstrap(state: tauri::State<'_, AppState>) -> Bootstrap {
         platform: std::env::consts::OS,
         bound_interface: state.engine.get().bound_interface.clone(),
         warnings: state.startup_warnings.clone(),
+        settings_problem: state.settings_problem.clone(),
         self_updates: crate::flatpak::app_id().is_none(),
     }
 }
@@ -2003,6 +2008,7 @@ mod tests {
             activity: Mutex::new(ActivityLog::load(root.join("activity.json"))),
             stream: None,
             startup_warnings: vec![],
+            settings_problem: None,
         });
         app
     }

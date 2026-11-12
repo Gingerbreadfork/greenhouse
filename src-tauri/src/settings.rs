@@ -371,10 +371,29 @@ fn copy_recursive(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn load(path: &Path) -> Settings {
-    match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-        Err(_) => Settings::default(),
+/// Reads the settings, with a note when the file could not be understood.
+/// Such a file is kept beside the real one, since the defaults used in its
+/// place are written over it by the next change.
+pub fn load(path: &Path) -> (Settings, Option<String>) {
+    let Ok(bytes) = std::fs::read(path) else {
+        return (Settings::default(), None);
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(settings) => (settings, None),
+        Err(e) => {
+            let kept = path.with_extension("bad.json");
+            let note = match std::fs::copy(path, &kept) {
+                Ok(_) => format!(
+                    "The settings file has a mistake in it, so the defaults are in use. \
+                     Your file was kept as {}. ({e})",
+                    kept.display()
+                ),
+                Err(_) => format!(
+                    "The settings file has a mistake in it, so the defaults are in use. ({e})"
+                ),
+            };
+            (Settings::default(), Some(note))
+        }
     }
 }
 
@@ -498,6 +517,27 @@ mod tests {
         // a name that merely contains the text is not a match
         assert!(!s.is_skipped("exe"));
         assert!(!s.is_skipped("readme.exec"));
+    }
+
+    #[test]
+    fn a_settings_file_with_a_mistake_is_kept_not_lost() {
+        let dir = std::env::temp_dir().join(format!("gh-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("settings.json");
+
+        std::fs::write(&file, r#"{ "download_dir": "/films", "compact": true }"#).unwrap();
+        let (read, note) = load(&file);
+        assert_eq!((read.download_dir.as_str(), read.compact, note), ("/films", true, None));
+
+        let broken = r#"{ "download_dir": "/films", "seed_ratio_limit": null }"#;
+        std::fs::write(&file, broken).unwrap();
+        let (read, note) = load(&file);
+        assert_eq!(read.download_dir, default_download_dir());
+        assert!(note.unwrap().contains("settings.bad.json"));
+        assert_eq!(std::fs::read_to_string(dir.join("settings.bad.json")).unwrap(), broken);
+
+        assert!(load(&dir.join("missing.json")).1.is_none());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

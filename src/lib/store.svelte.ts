@@ -198,6 +198,9 @@ class Store {
     this.selfUpdates = boot.self_updates;
     this.appliedNetwork = networkKey(boot.settings);
     for (const warning of boot.warnings) this.toast('Check your network settings', 'bad', warning);
+    if (boot.settings_problem) {
+      this.toast('Your settings could not be read', 'bad', boot.settings_problem);
+    }
     this.applyChrome();
     this.torrents = await api.listTorrents();
     this.ready = true;
