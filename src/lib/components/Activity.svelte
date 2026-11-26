@@ -8,7 +8,9 @@
     finished: { icon: 'check', word: 'Finished' },
     stopped: { icon: 'pause', word: 'Stopped seeding' },
     moved: { icon: 'folder', word: 'Moved' },
-    failed: { icon: 'alert', word: 'Failed' }
+    failed: { icon: 'alert', word: 'Failed' },
+    waiting: { icon: 'disk', word: 'Waiting for disk space' },
+    resumed: { icon: 'disk', word: 'Has room again' }
   };
 
   function dayOf(entry: ActivityEntry): string {
@@ -46,7 +48,7 @@
       <h1>Activity</h1>
       <p>
         What Greenhouse has done, including what it did on its own: feeds, the watch folder,
-        magnets that waited for peers, and seeding limits.
+        magnets that waited for peers, seeding limits, and downloads paused for disk space.
       </p>
     </div>
     <button class="btn" disabled={store.activity.length === 0} onclick={() => store.clearActivity()}>
@@ -178,6 +180,8 @@
   .added .mark { color: var(--flow); }
   .finished .mark { color: var(--heat); }
   .failed .mark { color: var(--alarm); }
+  .waiting .mark { color: var(--alarm); }
+  .resumed .mark { color: var(--flow); }
 
   .body { flex: 1; min-width: 0; }
 
@@ -201,6 +205,7 @@
 
   .word { flex: none; color: var(--ink-dim); }
   .failed .word { color: var(--alarm); }
+  .waiting .word { color: var(--alarm); }
 
   .why {
     color: var(--ink-faint);

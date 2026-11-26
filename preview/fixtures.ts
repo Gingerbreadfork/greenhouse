@@ -27,7 +27,8 @@ export const torrents: TorrentRow[] = [
     private: false,
     ratio: 0.11,
     has_metadata: true,
-    stopped: false
+    stopped: false,
+    waiting_for_space: false
   },
   {
     id: 2,
@@ -52,7 +53,8 @@ export const torrents: TorrentRow[] = [
     private: false,
     ratio: 0.02,
     has_metadata: true,
-    stopped: false
+    stopped: false,
+    waiting_for_space: false
   },
   {
     id: 3,
@@ -77,7 +79,8 @@ export const torrents: TorrentRow[] = [
     private: false,
     ratio: 4.29,
     has_metadata: true,
-    stopped: false
+    stopped: false,
+    waiting_for_space: false
   },
   {
     id: 4,
@@ -102,7 +105,8 @@ export const torrents: TorrentRow[] = [
     private: false,
     ratio: 0.41,
     has_metadata: true,
-    stopped: false
+    stopped: false,
+    waiting_for_space: false
   },
   {
     id: 5,
@@ -127,7 +131,8 @@ export const torrents: TorrentRow[] = [
     private: false,
     ratio: 0,
     has_metadata: true,
-    stopped: false
+    stopped: false,
+    waiting_for_space: false
   },
   {
     id: 6,
@@ -152,7 +157,8 @@ export const torrents: TorrentRow[] = [
     private: true,
     ratio: 0.02,
     has_metadata: true,
-    stopped: true
+    stopped: true,
+    waiting_for_space: false
   },
   {
     id: 7,
@@ -177,7 +183,8 @@ export const torrents: TorrentRow[] = [
     private: false,
     ratio: 0,
     has_metadata: false,
-    stopped: false
+    stopped: false,
+    waiting_for_space: false
   },
   {
     id: 8,
@@ -202,7 +209,8 @@ export const torrents: TorrentRow[] = [
     private: false,
     ratio: 1.42,
     has_metadata: true,
-    stopped: true
+    stopped: true,
+    waiting_for_space: false
   },
   {
     id: 9,
@@ -227,7 +235,34 @@ export const torrents: TorrentRow[] = [
     private: false,
     ratio: 0.03,
     has_metadata: true,
-    stopped: true
+    stopped: true,
+    waiting_for_space: false
+  },
+  {
+    id: 10,
+    info_hash: '2468ace02468ace02468ace02468ace02468ace0',
+    name: 'OpenStreetMap — planet extract, Europe (PBF)',
+    state: 'paused',
+    error: null,
+    progress: 0.23,
+    progress_bytes: 7.1 * GB,
+    total_bytes: 31 * GB,
+    uploaded_bytes: 310 * MB,
+    download_speed: 0,
+    upload_speed: 0,
+    eta_seconds: null,
+    peers_live: 0,
+    peers_connecting: 0,
+    peers_queued: 0,
+    peers_seen: 56,
+    finished: false,
+    output_folder: '/home/you/Media/Maps',
+    tracker_count: 14,
+    private: false,
+    ratio: 0.04,
+    has_metadata: true,
+    stopped: true,
+    waiting_for_space: true
   }
 ];
 
@@ -277,6 +312,7 @@ export const settings: Settings = {
   max_active_seeds: 4,
   seed_ratio_limit: 2,
   seed_time_limit_minutes: 0,
+  min_free_space_mb: 1024,
   notify_on_done: true,
   close_to_background: false,
   start_on_login: false,
@@ -440,6 +476,7 @@ const ago = (minutes: number) => Math.floor(Date.now() / 1000) - minutes * 60;
 
 export const activity = [
   { at: ago(4), kind: 'added', title: 'archlinux-2026.09.01-x86_64.iso', detail: 'Added from the feed Arch Linux releases' },
+  { at: ago(21), kind: 'waiting', title: 'OpenStreetMap — planet extract, Europe (PBF)', detail: '812 MB free on /home/you/Media, less than the 1.0 GB to keep free' },
   { at: ago(38), kind: 'finished', title: 'debian-13.1.0-amd64-netinst.iso', detail: null },
   { at: ago(39), kind: 'moved', title: 'debian-13.1.0-amd64-netinst.iso', detail: 'Moved to /home/you/Downloads' },
   { at: ago(180), kind: 'stopped', title: 'LibriVox — The Wind in the Willows (audiobook, FLAC)', detail: 'Reached a ratio of 2' },

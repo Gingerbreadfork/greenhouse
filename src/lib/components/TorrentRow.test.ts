@@ -36,6 +36,21 @@ describe('TorrentRow', () => {
     expect(screen.queryByLabelText(`Resume ${checking.name}`)).not.toBeNull();
   });
 
+  it('says when a download is waiting for disk space', () => {
+    const paused = { ...first('paused'), waiting_for_space: false };
+    const plain = show(paused);
+    expect(plain.container.textContent).toContain('Paused');
+    expect(plain.container.querySelector('.row.waiting')).toBeNull();
+    plain.unmount();
+
+    const { container } = show({ ...paused, waiting_for_space: true });
+    expect(container.textContent).toContain('Waiting for disk space');
+    expect(container.textContent).toContain('carries on when there is room');
+    expect(container.textContent).not.toContain('Paused');
+    expect(container.querySelector('.row.waiting')).not.toBeNull();
+    expect(screen.queryByLabelText(`Resume ${paused.name}`)).not.toBeNull();
+  });
+
   it('has nothing to press while its files are moved', () => {
     const { container } = show({ ...first('seeding'), state: 'moving', output_folder: '/films' });
     expect(container.querySelector<HTMLElement>('.actions')?.hidden).toBe(true);

@@ -72,6 +72,9 @@ pub struct Settings {
     pub seed_ratio_limit: f64,
     /// Stop seeding after this long. 0 means never.
     pub seed_time_limit_minutes: u32,
+    /// Megabytes to keep free where a download is written. Downloads pause
+    /// below this. 0 means off.
+    pub min_free_space_mb: u32,
 
     pub notify_on_done: bool,
     /// Closing the window hides it and Greenhouse carries on.
@@ -118,6 +121,7 @@ impl Default for Settings {
             max_active_seeds: 0,
             seed_ratio_limit: 0.0,
             seed_time_limit_minutes: 0,
+            min_free_space_mb: 1024,
             notify_on_done: true,
             close_to_background: false,
             start_on_login: false,
@@ -235,6 +239,11 @@ impl Paths {
     /// Torrents the queue paused, as opposed to ones you paused.
     pub fn queue_paused_file(&self) -> PathBuf {
         self.data_dir.join("queue-paused.json")
+    }
+
+    /// Downloads paused because their disk was nearly full.
+    pub fn disk_paused_file(&self) -> PathBuf {
+        self.data_dir.join("disk-paused.json")
     }
 
     /// Running upload and seeding-time totals for each torrent.
@@ -521,6 +530,41 @@ pub fn free_space(path: &Path) -> Option<u64> {
     (ok != 0).then_some(available)
 }
 
+/// A volume, and the room left on it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Volume {
+    /// Where it is mounted, which also tells one volume from another.
+    pub root: String,
+    pub free: u64,
+}
+
+/// Where the volume that holds `path` is mounted, found from the nearest
+/// folder that already exists.
+#[cfg(unix)]
+pub fn volume_root(path: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let existing = path.ancestors().find(|p| p.exists())?.canonicalize().ok()?;
+    let device = existing.metadata().ok()?.dev();
+    existing
+        .ancestors()
+        .take_while(|p| p.metadata().is_ok_and(|m| m.dev() == device))
+        .last()
+        .map(Path::to_path_buf)
+}
+
+/// The drive or share that holds `path`.
+#[cfg(windows)]
+pub fn volume_root(path: &Path) -> Option<PathBuf> {
+    let existing = path.ancestors().find(|p| p.exists())?;
+    existing.ancestors().last().map(Path::to_path_buf)
+}
+
+/// The volume that holds `path`, with the room left where `path` is.
+pub fn volume_of(path: &Path) -> Option<Volume> {
+    let root = volume_root(path)?.to_string_lossy().into_owned();
+    Some(Volume { root, free: free_space(path)? })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -580,6 +624,18 @@ mod tests {
         assert!(here > 0);
         assert!(free_space(&tmp.join("not/made/yet")).is_some());
         assert_eq!(free_space(Path::new("")), None);
+    }
+
+    #[test]
+    fn a_folder_not_made_yet_is_on_the_volume_it_would_go_on() {
+        let tmp = std::env::temp_dir();
+        let here = volume_of(&tmp).unwrap();
+        let deeper = volume_of(&tmp.join("not/made/yet")).unwrap();
+
+        assert_eq!(here.root, deeper.root);
+        assert!(here.free > 0);
+        assert!(Path::new(&here.root).is_absolute());
+        assert_eq!(volume_of(Path::new("")), None);
     }
 
     #[test]

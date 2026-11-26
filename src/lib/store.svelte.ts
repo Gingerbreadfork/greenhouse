@@ -131,7 +131,7 @@ class Store {
       if (t.state === 'seeding') c.seeding += 1;
       if (t.state === 'paused' || t.state === 'complete') c.paused += 1;
       if (t.finished) c.finished += 1;
-      if (t.state === 'error') c.issues += 1;
+      if (t.state === 'error' || t.waiting_for_space) c.issues += 1;
     }
     return c;
   });
@@ -150,7 +150,7 @@ class Store {
         case 'finished':
           return t.finished;
         case 'issues':
-          return t.state === 'error';
+          return t.state === 'error' || t.waiting_for_space;
         default:
           return true;
       }

@@ -105,6 +105,9 @@
   }
 
   /** A positive number that may carry a fraction, or 0 when empty. */
+  /** The most megabytes the setting can hold. */
+  const MOST_MB = 0xffff_ffff;
+
   function decimal(event: Event): number {
     const value = Number((event.currentTarget as HTMLInputElement).value);
     return Number.isFinite(value) && value > 0 ? value : 0;
@@ -324,6 +327,30 @@
             store.patchSettings({ seed_time_limit_minutes: Math.round(decimal(e) * 60) })}
         />
         <span class="unit">hours</span>
+      </div>
+    </div>
+    <div class="field">
+      <div class="field-text">
+        <span class="label">Keep this much disk space free</span>
+        <span class="hint">
+          Downloads pause below this until there is room. Leave empty to turn it off.
+        </span>
+      </div>
+      <div class="rate">
+        <input
+          type="number"
+          min="0"
+          max={MOST_MB / 1024}
+          step="0.5"
+          value={settings.min_free_space_mb ? +(settings.min_free_space_mb / 1024).toFixed(2) : ''}
+          placeholder="Off"
+          aria-label="Gigabytes of disk space to keep free"
+          onchange={(e) =>
+            store.patchSettings({
+              min_free_space_mb: Math.min(Math.round(decimal(e) * 1024), MOST_MB)
+            })}
+        />
+        <span class="unit">GB</span>
       </div>
     </div>
   </section>

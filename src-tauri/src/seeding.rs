@@ -169,6 +169,7 @@ mod tests {
             has_metadata: true,
             private: false,
             stopped: state != "seeding",
+            waiting_for_space: false,
             downloaded_now: 0,
         }
     }

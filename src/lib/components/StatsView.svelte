@@ -19,7 +19,7 @@
       downloading: t.filter((x) => x.state === 'downloading' || x.state === 'checking').length,
       seeding: t.filter((x) => x.state === 'seeding').length,
       stopped: t.filter((x) => x.state === 'paused' || x.state === 'complete').length,
-      failed: t.filter((x) => x.state === 'error').length,
+      failed: t.filter((x) => x.state === 'error' || x.waiting_for_space).length,
       size: t.reduce((sum, x) => sum + x.total_bytes, 0),
       onDisk: t.reduce((sum, x) => sum + x.progress_bytes, 0)
     };

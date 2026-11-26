@@ -17,6 +17,17 @@ describe('store', () => {
     expect(store.torrents.length).toBeGreaterThan(0);
   });
 
+  it('counts a download waiting for disk space as needing attention', () => {
+    const waiting = store.torrents.filter((t) => t.waiting_for_space);
+    const failed = store.torrents.filter((t) => t.state === 'error');
+    expect(waiting.length).toBe(1);
+    expect(store.counts.issues).toBe(failed.length + 1);
+
+    store.filter = 'issues';
+    expect(store.visible).toContain(waiting[0]);
+    store.filter = 'all';
+  });
+
   it('applies a settings patch and the chrome that goes with it', async () => {
     await store.patchSettings({ accent: 'brass', compact: true });
     expect(store.settings?.accent).toBe('brass');

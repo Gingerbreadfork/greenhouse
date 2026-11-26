@@ -121,6 +121,9 @@ you see is the real one.
 filter for torrents that hold hundreds of files. Unfinished downloads can live
 in a separate folder and are moved to their real destination on completion.
 
+**Disk space.** Downloads pause when the disk they are writing to has less
+than a gigabyte free, or the amount you set, and carry on once there is room.
+
 **Play while it downloads.** Hit play on a video or audio file and it opens in
 mpv, VLC or the player you name, before the download is done. The part being
 watched is fetched first, so you can start a film seconds after adding it.
@@ -300,7 +303,7 @@ src/                     Svelte 5 interface
 src-tauri/src/
   engine.rs              librqbit session and the DTOs the interface reads
   commands.rs            the Tauri command surface
-  supervisor.rs          queue limits, move-on-completion, notifications
+  supervisor.rs          queue limits, the disk guard, move-on-completion, notifications
   settings.rs            settings and tracker packs, stored as JSON
   torrentsrc.rs          magnet parsing and tracker-list handling
   trackercheck.rs        asking a pack's trackers whether they answer

@@ -160,7 +160,8 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
             ? {
                 ...t,
                 state: args.action === 'pause' ? 'paused' : 'downloading',
-                stopped: args.action === 'pause'
+                stopped: args.action === 'pause',
+                waiting_for_space: false
               }
             : t
         );

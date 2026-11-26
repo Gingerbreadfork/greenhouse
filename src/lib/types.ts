@@ -31,6 +31,8 @@ export interface TorrentRow {
   has_metadata: boolean;
   /** Not running, and not about to once a file check is over. */
   stopped: boolean;
+  /** Paused until the disk it downloads to has room again. */
+  waiting_for_space: boolean;
   /** Marked private in its metainfo, so only its own trackers announce it. */
   private: boolean;
 }
@@ -132,6 +134,8 @@ export interface Settings {
   max_active_seeds: number;
   seed_ratio_limit: number;
   seed_time_limit_minutes: number;
+  /** Megabytes to keep free where a download is written. 0 means off. */
+  min_free_space_mb: number;
   notify_on_done: boolean;
   close_to_background: boolean;
   start_on_login: boolean;
@@ -162,7 +166,7 @@ export interface Bootstrap {
 export interface ActivityEntry {
   /** Seconds since 1970. */
   at: number;
-  kind: 'added' | 'failed' | 'finished' | 'stopped' | 'moved';
+  kind: 'added' | 'failed' | 'finished' | 'stopped' | 'moved' | 'waiting' | 'resumed';
   title: string;
   detail: string | null;
 }

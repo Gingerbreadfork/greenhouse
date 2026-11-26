@@ -33,7 +33,12 @@
     error: { icon: 'alert', word: 'Stopped' }
   };
 
-  const mark = $derived(marks[torrent.state] ?? marks.paused);
+  const waiting = $derived(torrent.waiting_for_space);
+  const mark = $derived(
+    waiting
+      ? { icon: 'disk', word: 'Waiting for disk space' }
+      : (marks[torrent.state] ?? marks.paused)
+  );
   // Out of the engine until its files have moved, so nothing can act on it.
   const moving = $derived(torrent.state === 'moving');
   const running = $derived(torrent.state === 'downloading' || torrent.state === 'seeding');
@@ -50,8 +55,10 @@
     if (torrent.state === 'error') return torrent.error ?? 'Stopped by an error';
     if (moving) return `to ${torrent.output_folder}`;
     if (!torrent.has_metadata) return 'Fetching details from the swarm';
+    const reached = `${percent(torrent.progress)} of ${bytes(torrent.total_bytes)}`;
+    if (waiting) return `${reached}  ·  carries on when there is room`;
     const parts = [
-      `${percent(torrent.progress)} of ${bytes(torrent.total_bytes)}`,
+      reached,
       torrent.peers_live === 1 ? '1 peer' : `${torrent.peers_live} peers`
     ];
     if (torrent.tracker_count > 0) {
@@ -77,8 +84,7 @@
 <!-- Key events bubble to the grid, which owns the roving tabindex. -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
-  class="row {torrent.state}"
-  class:selected
+  class={[`row ${torrent.state}`, { selected, waiting }]}
   role="row"
   aria-selected={selected}
   tabindex={tab}
@@ -258,6 +264,7 @@
   .row.complete::before { background: color-mix(in srgb, var(--heat) 45%, transparent); }
   .row.error::before { background: var(--alarm); }
   .row.paused::before { background: color-mix(in srgb, var(--ink-faint) 55%, transparent); }
+  .row.waiting::before { background: color-mix(in srgb, var(--alarm) 70%, transparent); }
 
   /* Selection takes the rail. Declared after the state rails so it wins. */
   .row.selected::before { background: var(--accent); }
@@ -283,6 +290,7 @@
   .row.downloading .mark { color: var(--flow); }
   .row.seeding .mark { color: var(--heat); }
   .row.error .mark { color: var(--alarm); }
+  .row.waiting .mark { color: var(--alarm); }
   .row.complete .mark { color: var(--ink-dim); }
 
   .body { min-width: 0; }
@@ -313,6 +321,7 @@
   .row.downloading .word { color: var(--flow); }
   .row.seeding .word { color: var(--heat); }
   .row.error .word { color: var(--alarm); }
+  .row.waiting .word { color: var(--alarm); }
 
   .dim {
     color: var(--ink-faint);

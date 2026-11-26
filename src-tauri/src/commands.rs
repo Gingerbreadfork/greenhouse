@@ -16,7 +16,7 @@ use crate::engine::{self, SessionSummary, TorrentDetail, TorrentRow};
 use crate::feeds::{self, FeedStatus, FeedsState};
 use crate::seeding::SeedLedger;
 use crate::stream::StreamServer;
-use crate::supervisor::QueueHolds;
+use crate::supervisor::Holds;
 use crate::settings::{self, Paths, Settings};
 use crate::torrentsrc;
 use crate::trackercheck::{self, TrackerHealth};
@@ -33,7 +33,9 @@ pub struct AppState {
     pub seeding: Mutex<SeedLedger>,
     pub feeds: Mutex<FeedsState>,
     /// Torrents the queue paused, so ones you paused yourself are left alone.
-    pub queue_paused: Mutex<QueueHolds>,
+    pub queue_paused: Mutex<Holds>,
+    /// Downloads paused because their disk was nearly full.
+    pub disk_paused: Mutex<Holds>,
     /// Held while every torrent is being paused, so the queue does not start
     /// one of them in the middle of it.
     pub queue_gate: tokio::sync::Mutex<()>,
@@ -263,6 +265,10 @@ pub fn rows_with_totals(state: &AppState) -> Vec<TorrentRow> {
         .collect();
     rows.extend(away);
     state.seeding.lock().overlay(&mut rows);
+    let short_of_space = state.disk_paused.lock();
+    for row in &mut rows {
+        row.waiting_for_space = row.state == "paused" && short_of_space.contains(&row.info_hash);
+    }
     rows
 }
 
@@ -298,11 +304,15 @@ pub async fn torrent_action(
         return Ok(());
     };
     match action.as_str() {
-        "pause" => state.queue_paused.lock().remove(&info_hash),
+        "pause" => {
+            state.queue_paused.lock().remove(&info_hash);
+            state.disk_paused.lock().remove(&info_hash);
+        }
         // Nothing kept for a torrent outlives it once it is gone for good.
         "forget" | "delete" => {
             state.pending_moves.lock().remove(&info_hash);
             state.queue_paused.lock().remove(&info_hash);
+            state.disk_paused.lock().remove(&info_hash);
             if action == "delete" {
                 state.seeding.lock().forget(&info_hash);
             }
@@ -324,6 +334,7 @@ pub async fn pause_all_inner(state: &AppState) -> usize {
         }
     }
     state.queue_paused.lock().clear();
+    state.disk_paused.lock().clear();
     paused
 }
 
@@ -2224,7 +2235,8 @@ mod tests {
             resolving: Mutex::new(HashMap::new()),
             seeding: Mutex::new(SeedLedger::default()),
             feeds: Mutex::new(FeedsState::default()),
-            queue_paused: Mutex::new(QueueHolds::load(root.join("queue-paused.json"))),
+            queue_paused: Mutex::new(Holds::load(root.join("queue-paused.json"))),
+            disk_paused: Mutex::new(Holds::load(root.join("disk-paused.json"))),
             queue_gate: tokio::sync::Mutex::new(()),
             pending_moves: Mutex::new(pending_moves),
             moving: Mutex::new(HashMap::new()),
@@ -3322,6 +3334,115 @@ mod tests {
         });
     }
 
+    /// Downloads on a volume that runs short are paused, the one waiting in
+    /// the queue along with them, and the queue takes over once there is room.
+    #[test]
+    fn the_disk_guard_holds_downloads_until_there_is_room() {
+        use crate::supervisor::{settle_space, Supervisor};
+
+        tauri::async_runtime::block_on(async {
+            let app = test_app("disk-guard", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            state.settings.write().max_active_downloads = 1;
+            let one = make_torrent(&root.join("one"), "One", b"first", &[]).await;
+            let two = make_torrent(&root.join("two"), "Two", b"second", &[]).await;
+            let one = add_file_with_defaults(&state, "one".into(), one).await.unwrap().id.unwrap();
+            let two = add_file_with_defaults(&state, "two".into(), two).await.unwrap().id.unwrap();
+
+            let rows = || engine::collect_rows(&state.session());
+            let state_of = |id: usize| rows().into_iter().find(|r| r.id == id).unwrap().state;
+            for _ in 0..100 {
+                if state_of(one) == "downloading" && state_of(two) == "downloading" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Supervisor::default().enforce_queue(&state, &rows()).await;
+            assert_eq!((state_of(one), state_of(two)), ("downloading".into(), "paused".into()));
+
+            let minimum = 1024 * 1024 * 1024;
+            let with_free = |free: u64| -> HashMap<String, settings::Volume> {
+                let volume = settings::Volume { root: "/disk".into(), free };
+                rows().into_iter().map(|r| (r.output_folder, volume.clone())).collect()
+            };
+            let waiting = || -> Vec<bool> {
+                rows_with_totals(&state).iter().map(|r| r.waiting_for_space).collect()
+            };
+
+            let changes = settle_space(&state, &rows(), &with_free(minimum - 1), minimum).await;
+            assert_eq!(changes.stopped.len(), 2);
+            assert_eq!((state_of(one), state_of(two)), ("paused".into(), "paused".into()));
+            assert_eq!(waiting(), [true, true]);
+            assert!(state.queue_paused.lock().is_empty());
+            assert_eq!(Holds::load(root.join("disk-paused.json")).hashes().len(), 2);
+            // The queue has nothing of its own to start in their place.
+            Supervisor::default().enforce_queue(&state, &rows()).await;
+            assert_eq!((state_of(one), state_of(two)), ("paused".into(), "paused".into()));
+
+            let changes = settle_space(&state, &rows(), &with_free(minimum * 2), minimum).await;
+            assert_eq!(changes.resumed.len(), 2);
+            assert!(state.disk_paused.lock().is_empty());
+            assert_eq!(waiting(), [false, false]);
+            Supervisor::default().enforce_queue(&state, &rows()).await;
+            assert_ne!(state_of(one), "paused");
+            assert_eq!(state_of(two), "paused");
+            let second = state.session().get(two.into()).unwrap().info_hash().as_string();
+            assert!(state.queue_paused.lock().contains(&second));
+
+            // Pause all makes every one of them yours.
+            settle_space(&state, &rows(), &with_free(0), minimum).await;
+            assert_eq!(waiting(), [true, true]);
+            pause_all_inner(&state).await;
+            assert!(state.disk_paused.lock().is_empty());
+            assert_eq!(waiting(), [false, false]);
+        });
+    }
+
+    /// A check reads the disk the download is really on, and the next one
+    /// waits its turn.
+    #[test]
+    fn the_disk_guard_measures_the_volume_a_download_is_on() {
+        use crate::supervisor::Supervisor;
+
+        tauri::async_runtime::block_on(async {
+            let app = test_app("disk-guard-real", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let torrent = make_torrent(&root.join("made"), "One", b"first", &[]).await;
+            add_file_with_defaults(&state, "one".into(), torrent).await.unwrap();
+            let rows = || engine::collect_rows(&state.session());
+            for _ in 0..100 {
+                if rows()[0].state == "downloading" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+
+            // More than any disk has free.
+            state.settings.write().min_free_space_mb = u32::MAX;
+            let mut guard = Supervisor::default();
+            let notes = guard.check_space(&state, &rows()).await;
+            assert_eq!(notes.len(), 1, "{notes:?}");
+            assert_eq!((notes[0].kind, notes[0].title.as_str()), ("waiting", "One"));
+            assert!(notes[0].detail.as_deref().unwrap().contains(" free on "));
+            assert_eq!(rows()[0].state, "paused");
+
+            state.settings.write().min_free_space_mb = 0;
+            assert!(guard.check_space(&state, &rows()).await.is_empty(), "checked again too soon");
+            let notes = Supervisor::default().check_space(&state, &rows()).await;
+            assert_eq!((notes[0].kind, &notes[0].detail), ("resumed", &None));
+            assert!(state.queue_paused.lock().contains(&rows()[0].info_hash));
+            assert!(Supervisor::default().check_space(&state, &rows()).await.is_empty());
+        });
+    }
+
     /// Deleting a torrent drops what was kept for it, so adding it again
     /// later starts from nothing.
     #[test]
@@ -3344,6 +3465,7 @@ mod tests {
             row.uploaded_bytes = 500;
             state.seeding.lock().record(&row, 0);
             state.queue_paused.lock().insert(row.info_hash.clone());
+            state.disk_paused.lock().insert(row.info_hash.clone());
 
             torrent_action(app.state(), id, "delete".into()).await.unwrap();
 
@@ -3352,6 +3474,7 @@ mod tests {
             state.seeding.lock().overlay(&mut rows);
             assert_eq!(rows[0].uploaded_bytes, 0);
             assert!(!state.queue_paused.lock().contains(&rows[0].info_hash));
+            assert!(!state.disk_paused.lock().contains(&rows[0].info_hash));
             assert!(state.pending_moves.lock().is_empty());
         });
     }

@@ -106,7 +106,8 @@ pub fn run() {
             let feeds = feeds::FeedsState::load(&paths.feeds_file());
             let activity = activity::ActivityLog::load(paths.activity_file());
             let stream = tauri::async_runtime::block_on(stream::start(engine.clone())).ok();
-            let queue_paused = supervisor::QueueHolds::load(paths.queue_paused_file());
+            let queue_paused = supervisor::Holds::load(paths.queue_paused_file());
+            let disk_paused = supervisor::Holds::load(paths.disk_paused_file());
             let pending_moves = settings::PendingMoves::load(paths.pending_moves_file());
 
             app.manage(AppState {
@@ -119,6 +120,7 @@ pub fn run() {
                 seeding: Mutex::new(seeding),
                 feeds: Mutex::new(feeds),
                 queue_paused: Mutex::new(queue_paused),
+                disk_paused: Mutex::new(disk_paused),
                 queue_gate: tokio::sync::Mutex::new(()),
                 pending_moves: Mutex::new(pending_moves),
                 moving: Mutex::new(HashMap::new()),

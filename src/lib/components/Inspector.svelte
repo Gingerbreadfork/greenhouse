@@ -193,6 +193,10 @@
 
       {#if torrent.error}
         <p class="problem"><Icon name="alert" size={14} />{torrent.error}</p>
+      {:else if torrent.waiting_for_space}
+        <p class="problem">
+          <Icon name="disk" size={14} />Waiting for disk space. It carries on when there is room.
+        </p>
       {/if}
 
       <div class="rows">

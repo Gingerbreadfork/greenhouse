@@ -297,6 +297,8 @@ pub struct TorrentRow {
     pub private: bool,
     /// Not running, and not about to once a file check is over.
     pub stopped: bool,
+    /// Paused until the disk it downloads to has room again.
+    pub waiting_for_space: bool,
     /// Bytes downloaded and verified since it last started.
     #[serde(skip)]
     pub downloaded_now: u64,
@@ -393,6 +395,7 @@ pub fn collect_rows(session: &Arc<Session>) -> Vec<TorrentRow> {
                         TorrentStatsState::Live => false,
                         TorrentStatsState::Paused | TorrentStatsState::Error => true,
                     },
+                    waiting_for_space: false,
                     downloaded_now: live
                         .map(|l| l.snapshot.downloaded_and_checked_bytes)
                         .unwrap_or_default(),

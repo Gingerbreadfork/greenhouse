@@ -16,7 +16,7 @@ const KEPT: usize = 500;
 pub struct Entry {
     /// Seconds since 1970.
     pub at: u64,
-    /// added, failed, finished, stopped or moved.
+    /// added, failed, finished, stopped, moved, waiting or resumed.
     pub kind: String,
     pub title: String,
     pub detail: Option<String>,
