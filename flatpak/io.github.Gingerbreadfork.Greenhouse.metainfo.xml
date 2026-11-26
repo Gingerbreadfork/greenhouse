@@ -94,6 +94,11 @@
   </keywords>
 
   <releases>
+    <release version="0.6.0" date="2026-11-26">
+      <description>
+        <p>The inspector now draws a piece map of each torrent, showing what has arrived, what is still to come and what belongs to skipped files. A tracker pack can be checked to see which of its trackers still answer, a torrent's .torrent file can be saved from its menu, and downloads pause before the disk they are writing to fills up. An open torrent's details are no longer fetched every second, and a torrent removed while the queue held it no longer starts by itself when added again.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-11-12">
       <description>
         <p>Feed checks and blocklist downloads now go through the network interface you tie Greenhouse to, like the torrents do. Moving a finished download no longer freezes the list, a torrent stopped by an error can be resumed, and the queue no longer leaves a torrent stuck on checking files. Changing a feed's address no longer downloads its backlog, a taken port no longer stops Greenhouse from starting, and a settings file with a mistake in it is kept instead of being replaced.</p>
