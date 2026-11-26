@@ -548,7 +548,9 @@ mod tests {
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let gone = listener.local_addr().unwrap();
         drop(listener);
-        let refused = check_one(&client(), None, &format!("http://{gone}/announce"), QUICK).await;
+        // Windows keeps trying a closed port for a while before it says so.
+        let refused =
+            check_one(&client(), None, &format!("http://{gone}/announce"), BUDGET * 2).await;
         assert_eq!(refused.status, "silent");
         assert_eq!(refused.reason.as_deref(), Some("refused the connection"));
 
