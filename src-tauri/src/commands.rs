@@ -19,6 +19,7 @@ use crate::stream::StreamServer;
 use crate::supervisor::QueueHolds;
 use crate::settings::{self, Paths, Settings};
 use crate::torrentsrc;
+use crate::trackercheck::{self, TrackerHealth};
 
 pub struct AppState {
     pub engine: Arc<engine::EngineSlot>,
@@ -1554,6 +1555,17 @@ pub async fn fetch_tracker_list(
         return Err("no tracker URLs found at that address".into());
     }
     Ok(list)
+}
+
+/// Asks each tracker whether it is there, over the interface torrents use.
+#[tauri::command]
+pub async fn check_trackers(
+    state: tauri::State<'_, AppState>,
+    trackers: Vec<String>,
+) -> CmdResult<Vec<TrackerHealth>> {
+    let running = state.engine.get();
+    let (http, device) = (running.http.clone(), running.bound_interface.clone());
+    Ok(trackercheck::check_all(http, device, trackers, trackercheck::BUDGET).await)
 }
 
 #[derive(Serialize)]

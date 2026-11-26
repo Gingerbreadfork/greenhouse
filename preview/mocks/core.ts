@@ -156,6 +156,20 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
       return undefined as T;
     case 'fetch_tracker_list':
       return ['udp://tracker.opentrackr.org:1337/announce'] as T;
+    case 'check_trackers': {
+      await delay(1400);
+      const misses = ['no reply', 'host not found', 'the reply was not from a tracker'];
+      return (args?.trackers as string[]).map((url, i) => {
+        if (/^wss?:/i.test(url)) {
+          return { url, status: 'skipped', ms: null, reason: 'WebSocket trackers are not checked' };
+        }
+        // A fixed few miss, so the preview looks the same on every run.
+        if (i % 4 === 2) {
+          return { url, status: 'silent', ms: null, reason: misses[(i >> 2) % misses.length] };
+        }
+        return { url, status: 'answered', ms: 38 + ((i * 97) % 340), reason: null };
+      }) as T;
+    }
     default:
       return undefined as T;
   }

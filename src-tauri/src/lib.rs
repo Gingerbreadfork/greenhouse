@@ -12,6 +12,7 @@ mod supervisor;
 mod settings;
 mod stream;
 mod torrentsrc;
+mod trackercheck;
 mod watch;
 
 use std::collections::HashMap;
@@ -170,6 +171,7 @@ pub fn run() {
             commands::parse_trackers,
             commands::test_notification,
             commands::fetch_tracker_list,
+            commands::check_trackers,
             commands::apply_trackers,
             commands::apply_trackers_to_all,
             commands::apply_trackers_many,

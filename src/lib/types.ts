@@ -96,6 +96,16 @@ export interface TrackerPack {
   trackers: string[];
 }
 
+/** What a tracker said when asked whether it is there. */
+export interface TrackerHealth {
+  url: string;
+  status: 'answered' | 'silent' | 'skipped';
+  /** The round trip in milliseconds, when it answered. */
+  ms: number | null;
+  /** Why it did not answer, or why it was not checked. */
+  reason: string | null;
+}
+
 export interface Settings {
   download_dir: string;
   start_paused: boolean;

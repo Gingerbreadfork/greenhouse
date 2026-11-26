@@ -1,4 +1,4 @@
-import type { BulkApplyResult } from './types';
+import type { BulkApplyResult, TrackerHealth } from './types';
 
 const SCHEMES = ['http://', 'https://', 'udp://', 'ws://', 'wss://'];
 
@@ -38,6 +38,39 @@ export function bulkSummary(result: BulkApplyResult): {
     text: `Trackers added to ${torrents(result.changed)}`,
     tone: result.failed > 0 ? 'bad' : 'good',
     detail: notes.length > 0 ? notes.join(' · ') : undefined
+  };
+}
+
+/** What a check of a pack found, and a caution when some did not answer. */
+export function healthSummary(results: TrackerHealth[]): {
+  text: string;
+  hint?: string;
+  /** How many to offer for removal. None when nothing answered at all. */
+  removable: number;
+} {
+  const answered = results.filter((r) => r.status === 'answered').length;
+  const silent = results.filter((r) => r.status === 'silent').length;
+  const skipped = results.length - answered - silent;
+  const unchecked = skipped > 0 ? ` · ${skipped} not checked` : '';
+
+  if (silent === 0) {
+    if (answered === 0) return { text: 'None of these could be checked', removable: 0 };
+    return {
+      text: `${answered === 1 ? 'It' : `All ${answered}`} answered${unchecked}`,
+      removable: 0
+    };
+  }
+  if (answered === 0) {
+    return {
+      text: `None answered${unchecked}`,
+      hint: 'That is more often the connection than the trackers, so look there first.',
+      removable: 0
+    };
+  }
+  return {
+    text: `${answered} answered, ${silent} did not${unchecked}`,
+    hint: `One miss can be a busy tracker. Check again before removing ${silent === 1 ? 'it' : 'them'}.`,
+    removable: silent
   };
 }
 

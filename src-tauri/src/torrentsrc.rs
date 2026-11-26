@@ -183,7 +183,7 @@ fn bencode_string(s: &[u8]) -> Vec<u8> {
 }
 
 /// The keys of a bencoded dictionary with the raw bytes of each value.
-fn top_level_entries(data: &[u8]) -> Option<Vec<(&[u8], &[u8])>> {
+pub(crate) fn top_level_entries(data: &[u8]) -> Option<Vec<(&[u8], &[u8])>> {
     if data.first() != Some(&b'd') {
         return None;
     }

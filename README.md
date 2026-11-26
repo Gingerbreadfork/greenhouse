@@ -49,6 +49,12 @@ torrents first and it applies to just those.
 [ngosang/trackerslist](https://github.com/ngosang/trackerslist), and *Update
 from source* refetches it.
 
+**See which still answer.** *Check trackers* asks every tracker in a pack
+whether it is there, over the same network interface your torrents use, and
+shows which answered and how quickly. The ones that did not can be removed in
+one click, though a single miss may only be a busy tracker, so that is left to
+you.
+
 Pasted lists can be separated by newlines, commas or spaces. Comments and
 anything that is not an `http`, `https`, `udp`, `ws` or `wss` URL are dropped,
 and duplicates are removed case-insensitively.
@@ -295,6 +301,7 @@ src-tauri/src/
   supervisor.rs          queue limits, move-on-completion, notifications
   settings.rs            settings and tracker packs, stored as JSON
   torrentsrc.rs          magnet parsing and tracker-list handling
+  trackercheck.rs        asking a pack's trackers whether they answer
   feeds.rs, watch.rs     feeds and the watch folder
   stream.rs              the local server players stream unfinished files from
   seeding.rs             seeding limits and upload totals

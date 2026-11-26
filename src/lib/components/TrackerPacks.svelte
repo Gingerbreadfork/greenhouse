@@ -3,9 +3,9 @@
   import Switch from './Switch.svelte';
   import { api } from '../api';
   import { store } from '../store.svelte';
-  import { bulkSummary, parseTrackerBlob, uniqueTrackers } from '../trackers';
-  import { trackerHost } from '../format';
-  import type { TrackerPack } from '../types';
+  import { bulkSummary, healthSummary, parseTrackerBlob, uniqueTrackers } from '../trackers';
+  import { trackerHost, trackerScheme } from '../format';
+  import type { TrackerHealth, TrackerPack } from '../types';
 
   const settings = $derived(store.settings!);
   const packs = $derived(settings.packs);
@@ -16,6 +16,58 @@
   let editing = $state<string | null>(null);
   let buffer = $state('');
   let busy = $state<string | null>(null);
+
+  /** The pack being checked, and each pack's last check with the list it ran on. */
+  let checking = $state<string | null>(null);
+  let checked = $state.raw<Record<string, { list: string; results: TrackerHealth[] }>>({});
+
+  const listKey = (trackers: string[]) => trackers.join('\n');
+  const rank = { silent: 0, skipped: 1, answered: 2 } as const;
+
+  /** A pack's last check, unless its list has changed since. */
+  function healthOf(pack: TrackerPack): TrackerHealth[] | null {
+    const last = checked[pack.id];
+    return last && last.list === listKey(pack.trackers) ? last.results : null;
+  }
+
+  /** The ones that did not answer first, since those are the ones to decide on. */
+  function worstFirst(results: TrackerHealth[]): TrackerHealth[] {
+    return [...results].sort((a, b) => rank[a.status] - rank[b.status]);
+  }
+
+  async function checkPack(pack: TrackerPack) {
+    const trackers = pack.trackers;
+    checking = pack.id;
+    try {
+      const results = await api.checkTrackers(trackers);
+      checked = { ...checked, [pack.id]: { list: listKey(trackers), results } };
+    } catch (e) {
+      store.toast(`Could not check ${pack.name}`, 'bad', String(e));
+    } finally {
+      checking = null;
+    }
+  }
+
+  function hideHealth(id: string) {
+    checked = Object.fromEntries(Object.entries(checked).filter(([pack]) => pack !== id));
+  }
+
+  function removeSilent(pack: TrackerPack, results: TrackerHealth[]) {
+    const silent = new Set(results.filter((r) => r.status === 'silent').map((r) => r.url));
+    const before = pack.trackers;
+    const kept = before.filter((url) => !silent.has(url));
+    // The rest of the check still holds for the shorter list.
+    checked = {
+      ...checked,
+      [pack.id]: { list: listKey(kept), results: results.filter((r) => !silent.has(r.url)) }
+    };
+    update(pack.id, { trackers: kept });
+    const count = silent.size === 1 ? '1 tracker' : `${silent.size} trackers`;
+    store.toast(`${count} removed from ${pack.name}`, 'good', undefined, {
+      label: 'Undo',
+      run: () => update(pack.id, { trackers: before })
+    });
+  }
 
   async function writePacks(next: TrackerPack[]) {
     await store.patchSettings({ packs: next });
@@ -198,7 +250,50 @@
             </div>
           </div>
         {:else}
-          {#if pack.trackers.length > 0}
+          {@const health = healthOf(pack)}
+          {#if health}
+            {@const said = healthSummary(health)}
+            <div class="health">
+              <div class="health-head">
+                <p class="health-said" role="status">
+                  <strong>{said.text}</strong>
+                  {#if said.hint}<span>{said.hint}</span>{/if}
+                </p>
+                {#if said.removable > 0}
+                  <button class="btn danger" onclick={() => removeSilent(pack, health)}>
+                    Remove {said.removable} that did not answer
+                  </button>
+                {/if}
+                <button
+                  class="btn ghost icon"
+                  onclick={() => hideHealth(pack.id)}
+                  aria-label="Hide the results"
+                >
+                  <Icon name="close" size={13} />
+                </button>
+              </div>
+              <ul class="health-list">
+                {#each worstFirst(health) as result (result.url)}
+                  <li class={result.status}>
+                    <span class="scheme {trackerScheme(result.url)}">
+                      {trackerScheme(result.url)}
+                    </span>
+                    <span class="host" title={result.url}>{trackerHost(result.url)}</span>
+                    {#if result.status === 'answered'}
+                      <span class="said num"><span class="sr">answered in </span>{result.ms} ms</span>
+                      <span class="mark"><Icon name="check" size={13} stroke={2} /></span>
+                    {:else if result.status === 'silent'}
+                      <span class="said">{result.reason ?? 'no reply'}</span>
+                      <span class="mark"><Icon name="alert" size={13} /></span>
+                    {:else}
+                      <span class="said" title={result.reason}>not checked</span>
+                      <span class="mark"><Icon name="minimize" size={13} /></span>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {:else if pack.trackers.length > 0}
             <ul class="preview">
               {#each pack.trackers.slice(0, 5) as url (url)}
                 <li title={url}>{trackerHost(url)}</li>
@@ -218,6 +313,15 @@
                 {busy === pack.id ? 'Fetching…' : 'Update from source'}
               </button>
             {/if}
+            <button
+              class="btn"
+              disabled={checking !== null || pack.trackers.length === 0}
+              aria-busy={checking === pack.id}
+              onclick={() => checkPack(pack)}
+            >
+              <Icon name="pulse" size={13} />
+              {checking === pack.id ? 'Checking…' : health ? 'Check again' : 'Check trackers'}
+            </button>
             <button
               class="btn"
               disabled={busy !== null || pack.trackers.length === 0}
@@ -385,6 +489,99 @@
 
   .preview .more { color: var(--ink-faint); background: transparent; }
 
+  .health {
+    margin-top: 11px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--r-md);
+    background: var(--ground);
+    overflow: hidden;
+  }
+
+  .health-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 7px 7px 11px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .health-said {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--ink-faint);
+  }
+
+  .health-said strong {
+    margin-right: 7px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .health-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 290px;
+    overflow-y: auto;
+  }
+
+  .health-list li {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) auto 14px;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 11px 5px 8px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .health-list li:last-child { border-bottom: 0; }
+  .health-list li.silent { background: var(--alarm-wash); }
+
+  .scheme {
+    font-size: 9.5px;
+    font-weight: 600;
+    text-align: center;
+    padding: 1px 0;
+    border-radius: 3px;
+    background: var(--surface-hi);
+    color: var(--ink-faint);
+    letter-spacing: 0.02em;
+  }
+
+  .scheme.udp { color: var(--flow); background: var(--flow-wash); }
+  .scheme.https, .scheme.wss { color: var(--heat); background: var(--heat-wash); }
+
+  .host {
+    font-size: 11.5px;
+    color: var(--ink-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .said {
+    font-size: 11px;
+    color: var(--ink-faint);
+    white-space: nowrap;
+  }
+
+  .mark { display: grid; place-items: center; color: var(--ink-faint); }
+  .answered .mark { color: var(--flow); }
+  .silent .said, .silent .mark { color: var(--alarm); }
+
+  /* Read out, not shown. */
+  .sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
   .pack-actions,
   .edit-actions {
     display: flex;
@@ -438,6 +635,7 @@
   .btn:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-faint); }
   .btn:disabled { opacity: 0.45; cursor: not-allowed; }
   .btn.ghost { background: transparent; }
+  .btn.icon { width: 28px; padding: 0; justify-content: center; border-color: transparent; }
   .btn.danger:hover:not(:disabled) { background: var(--alarm); border-color: var(--alarm); color: #fff; }
 
   .btn.primary {

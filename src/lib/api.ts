@@ -15,7 +15,8 @@ import type {
   Settings,
   StagedInfo,
   TorrentDetail,
-  TorrentRow
+  TorrentRow,
+  TrackerHealth
 } from './types';
 
 export const api = {
@@ -64,6 +65,8 @@ export const api = {
   parseTrackers: (blob: string) => invoke<string[]>('parse_trackers', { blob }),
   testNotification: () => invoke<void>('test_notification'),
   fetchTrackerList: (url: string) => invoke<string[]>('fetch_tracker_list', { url }),
+  checkTrackers: (trackers: string[]) =>
+    invoke<TrackerHealth[]>('check_trackers', { trackers }),
   applyTrackers: (id: number, trackers: string[], replace: boolean) =>
     invoke<ApplyTrackersResult>('apply_trackers', { id, trackers, replace }),
   applyTrackersToAll: (trackers: string[]) =>
