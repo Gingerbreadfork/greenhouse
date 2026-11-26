@@ -1673,15 +1673,18 @@ async fn apply_trackers_inner(
     })
 }
 
+/// A tracker address in one form, however it was written.
+fn tracker_key(tracker: &str) -> String {
+    match url::Url::parse(tracker.trim()) {
+        Ok(url) => String::from(url).to_ascii_lowercase(),
+        Err(_) => tracker.trim().to_ascii_lowercase(),
+    }
+}
+
 /// Whether two lists name the same trackers, however each is written.
 fn same_trackers(a: &[String], b: &[String]) -> bool {
     let set = |list: &[String]| -> HashSet<String> {
-        list.iter()
-            .map(|t| match url::Url::parse(t.trim()) {
-                Ok(url) => String::from(url).to_ascii_lowercase(),
-                Err(_) => t.trim().to_ascii_lowercase(),
-            })
-            .collect()
+        list.iter().map(|t| tracker_key(t)).collect()
     };
     set(a) == set(b)
 }
@@ -1820,6 +1823,197 @@ pub fn magnet_link(state: tauri::State<'_, AppState>, id: usize) -> CmdResult<St
         handle.name().as_deref(),
         &trackers,
     ))
+}
+
+/// A torrent's .torrent file and the name to save it under, less the
+/// extension.
+struct TorrentFile {
+    stem: String,
+    bytes: Bytes,
+}
+
+/// The .torrent file of a torrent in the list, announcing to the trackers it
+/// has now.
+fn torrent_file(state: &AppState, id: usize) -> CmdResult<TorrentFile> {
+    let handle = state
+        .session()
+        .get(id.into())
+        .ok_or("that torrent is no longer in the session")?;
+    let info_hash = handle.info_hash().as_string();
+    let trackers: Vec<String> = handle
+        .shared()
+        .trackers
+        .iter()
+        .map(|u| u.to_string())
+        .collect();
+    // The engine's copy has every tracker change. The stored one may not.
+    let bytes = handle
+        .metadata
+        .load()
+        .as_ref()
+        .map(|m| m.torrent_bytes.clone())
+        .filter(|bytes| !bytes.is_empty())
+        .or_else(|| {
+            std::fs::read(state.paths.source_file(&info_hash))
+                .ok()
+                .map(Bytes::from)
+        })
+        .ok_or("Its details have not arrived yet, so there is no torrent file to save.")?;
+    Ok(TorrentFile {
+        stem: handle.name().as_deref().and_then(file_stem).unwrap_or(info_hash),
+        bytes: listing_trackers(bytes, &trackers),
+    })
+}
+
+/// The torrent file listing exactly `trackers`. One that does already is
+/// returned as it is. Otherwise the file's own trackers keep their place,
+/// ahead of the ones it has gained.
+fn listing_trackers(bytes: Bytes, trackers: &[String]) -> Bytes {
+    let own = torrentsrc::announced(&bytes);
+    if same_trackers(&own, trackers) {
+        return bytes;
+    }
+    let current: HashSet<String> = trackers.iter().map(|t| tracker_key(t)).collect();
+    let mut listed: Vec<String> = own
+        .into_iter()
+        .filter(|t| current.contains(&tracker_key(t)))
+        .collect();
+    let kept: HashSet<String> = listed.iter().map(|t| tracker_key(t)).collect();
+    let mut gained: Vec<String> = trackers
+        .iter()
+        .filter(|t| !kept.contains(&tracker_key(t)))
+        .cloned()
+        .collect();
+    gained.sort();
+    listed.extend(gained);
+    torrentsrc::with_trackers(&bytes, &listed)
+        .map(Bytes::from)
+        .unwrap_or(bytes)
+}
+
+/// A torrent's name as the start of a file name that Linux and Windows both
+/// accept, or None when nothing usable is left of it.
+fn file_stem(name: &str) -> Option<String> {
+    let mut stem: String = name
+        .trim()
+        .chars()
+        .map(|c| if c.is_control() || r#"/\:*?"<>|"#.contains(c) { '_' } else { c })
+        .collect();
+    // Room for a number and the extension inside the usual 255 byte limit.
+    while stem.len() > 200 {
+        stem.pop();
+    }
+    // Windows drops trailing dots and spaces.
+    let stem = stem.trim_end_matches(['.', ' ']);
+    if stem.is_empty() {
+        return None;
+    }
+    Some(if is_windows_device(stem) { format!("_{stem}") } else { stem.to_string() })
+}
+
+/// Names such as CON and LPT1 that Windows keeps for devices, whatever
+/// extension follows.
+fn is_windows_device(stem: &str) -> bool {
+    let base = stem.split('.').next().unwrap_or_default().trim_end().to_ascii_uppercase();
+    matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (base.len() == 4
+            && (base.starts_with("COM") || base.starts_with("LPT"))
+            && base.ends_with(|c: char| c.is_ascii_digit()))
+}
+
+/// The file name offered when saving a torrent's .torrent file.
+#[tauri::command]
+pub fn torrent_file_name(state: tauri::State<'_, AppState>, id: usize) -> CmdResult<String> {
+    Ok(format!("{}.torrent", torrent_file(&state, id)?.stem))
+}
+
+/// Writes a torrent's .torrent file to the path picked in the save dialog,
+/// which has already asked about replacing a file that is there.
+#[tauri::command]
+pub async fn save_torrent_file(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    path: String,
+) -> CmdResult<String> {
+    let file = torrent_file(&state, id)?;
+    tokio::fs::write(&path, &file.bytes).await.map_err(err)?;
+    Ok(path)
+}
+
+#[derive(Serialize)]
+pub struct SavedTorrentFiles {
+    /// Where each file was written.
+    pub saved: Vec<String>,
+    /// Torrents whose file could not be written.
+    pub failed: usize,
+    /// Why the last of those failed.
+    pub error: Option<String>,
+}
+
+/// Writes the .torrent file of each torrent into a folder, never over a file
+/// that is already there.
+#[tauri::command]
+pub async fn save_torrent_files(
+    state: tauri::State<'_, AppState>,
+    ids: Vec<usize>,
+    folder: String,
+) -> CmdResult<SavedTorrentFiles> {
+    let mut result = SavedTorrentFiles {
+        saved: Vec::new(),
+        failed: 0,
+        error: None,
+    };
+    for id in ids {
+        let written = match torrent_file(&state, id) {
+            Ok(file) => write_new(Path::new(&folder), &file.stem, &file.bytes).await.map_err(err),
+            Err(e) => Err(e),
+        };
+        match written {
+            Ok(path) => result.saved.push(path.to_string_lossy().into_owned()),
+            Err(e) => {
+                result.failed += 1;
+                result.error = Some(e);
+            }
+        }
+    }
+    match result.error.clone() {
+        Some(e) if result.saved.is_empty() => Err(e),
+        _ => Ok(result),
+    }
+}
+
+/// Writes a new .torrent file named after `stem`, numbering the name when it
+/// is taken, and says where it went.
+async fn write_new(folder: &Path, stem: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut number = 1;
+    loop {
+        let path = folder.join(match number {
+            1 => format!("{stem}.torrent"),
+            n => format!("{stem} ({n}).torrent"),
+        });
+        let opened = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .await;
+        match opened {
+            Ok(mut file) => {
+                let written = match file.write_all(bytes).await {
+                    Ok(()) => file.flush().await,
+                    Err(e) => Err(e),
+                };
+                if written.is_err() {
+                    drop(file);
+                    let _ = tokio::fs::remove_file(&path).await;
+                }
+                return written.map(|()| path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && number < 999 => number += 1,
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Everything needed to put a removed torrent back exactly as it was.
@@ -2820,6 +3014,191 @@ mod tests {
             restart_engine_with(app.handle(), &state, build).await.unwrap();
             assert_eq!(trackers_of(&state, applied.id), vec![fresh]);
         });
+    }
+
+    /// The trackers a saved .torrent file announces to, and its info hash.
+    fn saved(path: &Path) -> (Vec<String>, String) {
+        let bytes = std::fs::read(path).unwrap();
+        let mut trackers = torrentsrc::announced(&bytes);
+        trackers.sort();
+        let hash = librqbit::torrent_from_bytes(&bytes).unwrap().info_hash.as_string();
+        (trackers, hash)
+    }
+
+    /// A saved torrent file is the same torrent with the trackers it has now.
+    #[test]
+    fn a_saved_torrent_file_carries_the_current_trackers() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("save-file", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let own = "udp://own.example:1/announce";
+            let pack = "udp://pack.example:2/announce";
+            let fresh = "udp://fresh.example:3/announce";
+            {
+                let mut settings = state.settings.write();
+                settings.start_paused = true;
+                settings.packs = vec![settings::TrackerPack {
+                    enabled: true,
+                    trackers: vec![pack.into()],
+                    ..Default::default()
+                }];
+            }
+            let torrent = make_torrent(&root, "payload", b"some bytes", &[own]).await;
+            let id = add_file_with_defaults(&state, "a".into(), torrent).await.unwrap().id.unwrap();
+            let hash = state.session().get(id.into()).unwrap().info_hash().as_string();
+            let path = root.join("chosen.torrent");
+            let chosen = path.to_string_lossy().into_owned();
+
+            assert_eq!(torrent_file_name(app.state(), id).unwrap(), "payload.torrent");
+            let written = save_torrent_file(app.state(), id, chosen.clone()).await.unwrap();
+            assert_eq!(written, chosen);
+            assert_eq!(saved(&path), (vec![own.to_string(), pack.to_string()], hash.clone()));
+
+            let id = apply_trackers_inner(&state, id, vec![fresh.into()], true).await.unwrap().id;
+            save_torrent_file(app.state(), id, chosen).await.unwrap();
+            assert_eq!(saved(&path), (vec![fresh.to_string()], hash));
+        });
+    }
+
+    /// Without the engine's copy the stored one is saved, brought up to date.
+    /// With neither there is nothing to save.
+    #[test]
+    fn a_torrent_without_its_details_cannot_be_saved() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("save-no-details", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            state.settings.write().start_paused = true;
+            let own = "udp://own.example:1/announce";
+            let fresh = "udp://fresh.example:3/announce";
+            let torrent = make_torrent(&root, "payload", b"some bytes", &[own]).await;
+            let added = add_file_with_defaults(&state, "a".into(), torrent.clone()).await.unwrap();
+            let id = apply_trackers_inner(&state, added.id.unwrap(), vec![fresh.into()], true)
+                .await
+                .unwrap()
+                .id;
+            let handle = state.session().get(id.into()).unwrap();
+            let hash = handle.info_hash().as_string();
+            let stored = state.paths.source_file(&hash);
+            let path = root.join("chosen.torrent");
+            let chosen = path.to_string_lossy().into_owned();
+
+            // As if the details had not arrived, with a stored copy that
+            // still lists the tracker the file came with.
+            handle.metadata.store(None);
+            std::fs::write(&stored, &torrent).unwrap();
+            save_torrent_file(app.state(), id, chosen.clone()).await.unwrap();
+            assert_eq!(saved(&path), (vec![fresh.to_string()], hash));
+
+            std::fs::remove_file(&stored).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            let refused = save_torrent_file(app.state(), id, chosen).await.unwrap_err();
+            assert!(refused.contains("details"), "{refused}");
+            assert!(torrent_file_name(app.state(), id).is_err());
+            assert!(!path.exists());
+        });
+    }
+
+    /// Saving several torrents gives each its own file and leaves alone a
+    /// file that is in the folder already.
+    #[test]
+    fn several_torrent_files_are_saved_side_by_side() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("save-several", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            state.settings.write().start_paused = true;
+            let one = make_torrent(&root.join("one"), "Release", b"first", &[]).await;
+            let two = make_torrent(&root.join("two"), "Release", b"second", &[]).await;
+            let one = add_file_with_defaults(&state, "one".into(), one).await.unwrap().id.unwrap();
+            let two = add_file_with_defaults(&state, "two".into(), two).await.unwrap().id.unwrap();
+            let folder = root.join("saved");
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("Release.torrent"), b"mine").unwrap();
+            let into = folder.to_string_lossy().into_owned();
+
+            let result = save_torrent_files(app.state(), vec![one, two, 999], into.clone())
+                .await
+                .unwrap();
+
+            let second = folder.join("Release (2).torrent");
+            let third = folder.join("Release (3).torrent");
+            assert_eq!(
+                result.saved,
+                vec![second.to_string_lossy(), third.to_string_lossy()]
+            );
+            assert_eq!(result.failed, 1);
+            assert!(result.error.unwrap().contains("no longer"));
+            assert_eq!(std::fs::read(folder.join("Release.torrent")).unwrap(), b"mine");
+            let hash = |id: usize| state.session().get(id.into()).unwrap().info_hash().as_string();
+            assert_eq!(saved(&second).1, hash(one));
+            assert_eq!(saved(&third).1, hash(two));
+
+            let Err(error) = save_torrent_files(app.state(), vec![999], into).await else {
+                panic!("a failure was reported as a success");
+            };
+            assert!(error.contains("no longer"));
+        });
+    }
+
+    /// A torrent's own trackers stay first in a saved file, so a client that
+    /// reads only the first one still finds the tracker it came with.
+    #[test]
+    fn a_saved_torrent_file_lists_its_own_trackers_first() {
+        let bare = b"d4:infod6:lengthi1e4:name1:a12:piece lengthi16384e6:pieces20:AAAAAAAAAAAAAAAAAAAAee";
+        let own = ["udp://z-own.example:1/announce", "udp://m-own.example:1/announce"]
+            .map(String::from);
+        let file = Bytes::from(torrentsrc::with_trackers(bare, &own).unwrap());
+        let now = [
+            "udp://b-pack.example:2/announce",
+            "UDP://M-OWN.example:1/announce",
+            "udp://z-own.example:1/announce",
+            "udp://a-pack.example:2/announce",
+        ]
+        .map(String::from);
+
+        let saved = listing_trackers(file.clone(), &now);
+
+        assert_eq!(
+            torrentsrc::announced(&saved),
+            [
+                "udp://z-own.example:1/announce",
+                "udp://m-own.example:1/announce",
+                "udp://a-pack.example:2/announce",
+                "udp://b-pack.example:2/announce",
+            ]
+        );
+        // One that was dropped since does not come back.
+        let fewer = listing_trackers(file.clone(), &now[2..]);
+        assert_eq!(
+            torrentsrc::announced(&fewer),
+            ["udp://z-own.example:1/announce", "udp://a-pack.example:2/announce"]
+        );
+        assert_eq!(listing_trackers(file.clone(), &own), file);
+    }
+
+    #[test]
+    fn torrent_file_names_suit_linux_and_windows() {
+        assert_eq!(file_stem(r#"a/b\c:d*e?f"g<h>i|j"#).as_deref(), Some("a_b_c_d_e_f_g_h_i_j"));
+        assert_eq!(file_stem("  Some Release. . ").as_deref(), Some("Some Release"));
+        assert_eq!(file_stem("tab\there").as_deref(), Some("tab_here"));
+        assert_eq!(file_stem("con").as_deref(), Some("_con"));
+        assert_eq!(file_stem("NUL.2024").as_deref(), Some("_NUL.2024"));
+        assert_eq!(file_stem("lpt1").as_deref(), Some("_lpt1"));
+        assert_eq!(file_stem("console").as_deref(), Some("console"));
+        assert_eq!(file_stem(".."), None);
+        assert_eq!(file_stem("   "), None);
+        assert_eq!(file_stem(&"é".repeat(300)).unwrap().len(), 200);
     }
 
     /// Adding trackers to several torrents says which ones failed, and leaves

@@ -272,6 +272,15 @@ export interface PendingAdd {
   waiting_seconds: number;
 }
 
+export interface SavedTorrentFiles {
+  /** Where each file was written. */
+  saved: string[];
+  /** Torrents whose file could not be written. */
+  failed: number;
+  /** Why the last of those failed. */
+  error: string | null;
+}
+
 export interface RestoreToken {
   info_hash: string;
   name: string | null;

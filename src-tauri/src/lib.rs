@@ -176,6 +176,9 @@ pub fn run() {
             commands::apply_trackers_to_all,
             commands::apply_trackers_many,
             commands::magnet_link,
+            commands::torrent_file_name,
+            commands::save_torrent_file,
+            commands::save_torrent_files,
             commands::forget_torrent,
             commands::restore_torrent,
         ])

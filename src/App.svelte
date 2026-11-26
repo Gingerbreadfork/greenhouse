@@ -1,6 +1,7 @@
 <script lang="ts">
   import { listen } from '@tauri-apps/api/event';
-  import { open } from '@tauri-apps/plugin-dialog';
+  import { open, save } from '@tauri-apps/plugin-dialog';
+  import { revealItemInDir } from '@tauri-apps/plugin-opener';
 
   import TopBar from './lib/components/TopBar.svelte';
   import Sidebar from './lib/components/Sidebar.svelte';
@@ -246,6 +247,66 @@
     }
   }
 
+  /** A toast button that shows files just saved in the file manager. */
+  function showSaved(paths: string[]) {
+    return {
+      label: 'Show in folder',
+      run: () => {
+        revealItemInDir(paths).catch((e) =>
+          store.toast('Could not open that folder', 'bad', String(e))
+        );
+      }
+    };
+  }
+
+  async function saveTorrentFile(torrent: TorrentRow) {
+    if (torrent.state === 'moving') {
+      store.toast('Its files are still being moved', 'info');
+      return;
+    }
+    try {
+      const path = await save({
+        title: 'Save torrent file',
+        defaultPath: await api.torrentFileName(torrent.id),
+        filters: [{ name: 'Torrent files', extensions: ['torrent'] }]
+      });
+      if (!path) return;
+      const written = await api.saveTorrentFile(torrent.id, path);
+      store.toast('Torrent file saved', 'good', written, showSaved([written]));
+    } catch (e) {
+      store.toast('Could not save the torrent file', 'bad', String(e));
+    }
+  }
+
+  /** Saves one .torrent file for each torrent into a folder you pick. */
+  async function saveTorrentFiles(torrents: TorrentRow[]) {
+    const folder = await open({
+      directory: true,
+      multiple: false,
+      title: `Choose where to save ${torrents.length} torrent files`
+    });
+    if (typeof folder !== 'string') return;
+    try {
+      const { saved, failed, error } = await api.saveTorrentFiles(
+        torrents.map((t) => t.id),
+        folder
+      );
+      const show = saved.length > 0 ? showSaved(saved) : undefined;
+      if (failed > 0) {
+        store.toast(
+          `${failed} of ${torrents.length} torrent files could not be saved`,
+          'bad',
+          error ?? undefined,
+          show
+        );
+      } else {
+        store.toast(`${saved.length} torrent files saved`, 'good', folder, show);
+      }
+    } catch (e) {
+      store.toast('Could not save the torrent files', 'bad', String(e));
+    }
+  }
+
   function openMenu(event: MouseEvent, id: number) {
     event.preventDefault();
     if (!store.isSelected(id)) store.selectOnly(id);
@@ -276,6 +337,12 @@
           icon: 'magnet',
           disabled: many,
           run: () => copyMagnet(first.id)
+        },
+        {
+          label: many ? `Save ${chosen.length} torrent files…` : 'Save torrent file…',
+          icon: 'file',
+          disabled: chosen.every((t) => !t.has_metadata),
+          run: () => (many ? saveTorrentFiles(chosen) : saveTorrentFile(first))
         },
         {
           label: 'Open folder',

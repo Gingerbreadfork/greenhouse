@@ -4,6 +4,7 @@ import type {
   ApplyTrackersResult,
   BulkApplyResult,
   RestoreToken,
+  SavedTorrentFiles,
   Bootstrap,
   BlocklistStatus,
   CommitResult,
@@ -74,6 +75,11 @@ export const api = {
   applyTrackersMany: (ids: number[], trackers: string[]) =>
     invoke<BulkApplyResult>('apply_trackers_many', { ids, trackers }),
   magnetLink: (id: number) => invoke<string>('magnet_link', { id }),
+  torrentFileName: (id: number) => invoke<string>('torrent_file_name', { id }),
+  saveTorrentFile: (id: number, path: string) =>
+    invoke<string>('save_torrent_file', { id, path }),
+  saveTorrentFiles: (ids: number[], folder: string) =>
+    invoke<SavedTorrentFiles>('save_torrent_files', { ids, folder }),
   forgetTorrent: (id: number) => invoke<RestoreToken>('forget_torrent', { id }),
   restoreTorrent: (token: RestoreToken) => invoke<number>('restore_torrent', { token })
 };

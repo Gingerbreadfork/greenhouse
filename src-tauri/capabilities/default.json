@@ -17,6 +17,7 @@
     "core:event:default",
     "core:app:default",
     "dialog:allow-open",
+    "dialog:allow-save",
     "dialog:allow-message",
     "opener:allow-reveal-item-in-dir",
     "opener:allow-open-url",

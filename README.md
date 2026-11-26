@@ -183,7 +183,9 @@ app.
 | <kbd>Ctrl</kbd> <kbd>Q</kbd> | Quit |
 
 Double-click opens a torrent's folder. Right-click opens the full menu,
-including *Copy magnet link*.
+including *Copy magnet link* and *Save torrent file*, which writes out the
+`.torrent` with the trackers the torrent has now. Select several and each gets
+its own file in the folder you choose.
 
 ---
 

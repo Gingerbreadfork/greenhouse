@@ -123,6 +123,18 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
       return live.length as T;
     case 'magnet_link':
       return `magnet:?xt=urn:btih:${'0'.repeat(40)}&dn=preview` as T;
+    case 'torrent_file_name':
+      return `${live.find((t) => t.id === args?.id)?.name ?? 'torrent'}.torrent` as T;
+    case 'save_torrent_file':
+      return args?.path as T;
+    case 'save_torrent_files':
+      return {
+        saved: (args?.ids ?? []).map(
+          (id: number) => `${args?.folder}/${live.find((t) => t.id === id)?.name ?? id}.torrent`
+        ),
+        failed: 0,
+        error: null
+      } as T;
     case 'forget_torrent': {
       const gone = live.find((t) => t.id === args?.id);
       live = live.filter((t) => t.id !== args?.id);
