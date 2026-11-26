@@ -20,9 +20,12 @@
   let detail = $state<TorrentDetail | null>(null);
   let loadError = $state<string | null>(null);
 
+  // The row is a new object on every list refresh, so the effect follows this.
+  const torrentId = $derived(torrent.id);
+
   // Detail is heavier than the list tick, so it refreshes only while open.
   $effect(() => {
-    const id = torrent.id;
+    const id = torrentId;
     let alive = true;
     const load = () =>
       api
