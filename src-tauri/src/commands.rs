@@ -1462,6 +1462,11 @@ async fn commit_resolved(
     };
 
     let info_hash = handle.info_hash().as_string();
+    // A hold left behind by a removed torrent is not this one's.
+    if !already {
+        state.queue_paused.lock().remove(&info_hash);
+        state.disk_paused.lock().remove(&info_hash);
+    }
     if let Some(bytes) = bytes.as_ref().filter(|_| !already) {
         let path = state.paths.source_file(&info_hash);
         let _ = tokio::fs::write(path, bytes).await;
@@ -3299,6 +3304,38 @@ mod tests {
             assert_ne!(state_of(held), "paused");
             assert_eq!(state_of(mine), "paused");
             assert!(!state.queue_paused.lock().contains(&hash));
+        });
+    }
+
+    /// A torrent removed while it was held and added again later is not the
+    /// queue's or the disk guard's to start. Undoing the removal keeps the hold.
+    #[test]
+    fn a_hold_does_not_carry_to_a_torrent_added_again() {
+        tauri::async_runtime::block_on(async {
+            let app = test_app("stale-hold", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            state.settings.write().start_paused = true;
+            let torrent = make_torrent(&root, "Held", b"some bytes", &[]).await;
+            let id = add_file_with_defaults(&state, "a".into(), torrent.clone()).await.unwrap().id.unwrap();
+            let hash = state.session().get(id.into()).unwrap().info_hash().as_string();
+            let held = || {
+                let queue = state.queue_paused.lock().contains(&hash);
+                (queue, state.disk_paused.lock().contains(&hash))
+            };
+            state.queue_paused.lock().insert(hash.clone());
+            state.disk_paused.lock().insert(hash.clone());
+
+            let token = forget_inner(&state, id).await.unwrap();
+            let id = restore_inner(&state, token).await.unwrap();
+            assert_eq!(held(), (true, true));
+
+            forget_inner(&state, id).await.unwrap();
+            add_file_with_defaults(&state, "a".into(), torrent).await.unwrap();
+            assert_eq!(held(), (false, false));
         });
     }
 
