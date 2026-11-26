@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
   import Check from './Check.svelte';
+  import PieceMap from './PieceMap.svelte';
   import TrackerEditor from './TrackerEditor.svelte';
   import { api } from '../api';
   import { store } from '../store.svelte';
@@ -169,11 +170,11 @@
   <div class="scroll">
     {#if tab === 'overview'}
       <div class="gauge">
-        <div class="track"><span style:width="{torrent.progress * 100}%" class={torrent.state}></span></div>
         <div class="gauge-meta">
           <span class="big num">{percent(torrent.progress)}</span>
           <span class="dim num">{bytes(torrent.progress_bytes)} of {bytes(torrent.total_bytes)}</span>
         </div>
+        <PieceMap {torrent} files={detail?.files} pieceSize={detail?.piece_size} />
       </div>
 
       <dl class="facts">
@@ -396,34 +397,14 @@
     padding: 16px;
   }
 
-  .gauge { margin-bottom: 18px; }
-
-  .track {
-    height: 6px;
-    border-radius: 99px;
-    background: var(--surface-hi);
-    overflow: hidden;
-  }
-
-  .track span {
-    display: block;
-    height: 100%;
-    border-radius: 99px;
-    background: var(--flow);
-    transition: width 900ms linear;
-  }
-
-  .track span.seeding,
-  .track span.complete { background: var(--heat); }
-  .track span.paused { background: var(--ink-faint); }
-  .track span.error { background: var(--alarm); }
+  .gauge { margin-bottom: 16px; }
 
   .gauge-meta {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: 10px;
-    margin-top: 9px;
+    margin-bottom: 11px;
   }
 
   .big { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }

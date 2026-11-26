@@ -88,6 +88,16 @@ export interface TorrentDetail {
   added_source: string | null;
 }
 
+export interface TorrentPieces {
+  /** How many pieces the torrent has. Zero until its metadata arrives. */
+  total: number;
+  /**
+   * One bit per piece as hex, the first piece in the top bit of the first
+   * byte. Null while the engine keeps no record, as during a file check.
+   */
+  have: string | null;
+}
+
 export interface TrackerPack {
   id: string;
   name: string;

@@ -541,6 +541,47 @@ pub fn torrent_detail(api: &Api, paths: &Paths, id: usize) -> Result<TorrentDeta
     })
 }
 
+#[derive(Serialize)]
+pub struct TorrentPieces {
+    /// How many pieces the torrent has. Zero until its metadata arrives.
+    pub total: u32,
+    /// One bit per piece as hex, the first piece in the top bit of the first
+    /// byte. None while the engine keeps no record, as during a file check.
+    pub have: Option<String>,
+}
+
+/// Which pieces of a torrent are downloaded and verified.
+pub fn torrent_pieces(api: &Api, id: usize) -> Result<TorrentPieces> {
+    let handle = api
+        .mgr_handle(id.into())
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let total = handle
+        .with_metadata(|m| m.info.lengths().total_pieces())
+        .unwrap_or(0);
+    let have = api
+        .api_dump_haves(id.into())
+        .ok()
+        .map(|(bits, _)| hex_bits(bits.as_raw_slice(), total));
+    Ok(TorrentPieces { total, have })
+}
+
+/// The first `count` bits of a bitfield as hex, in whole bytes. Bits past
+/// the count are cleared.
+fn hex_bits(bytes: &[u8], count: u32) -> String {
+    use std::fmt::Write;
+    let count = count as usize;
+    let len = count.div_ceil(8);
+    let mut out = String::with_capacity(len * 2);
+    for i in 0..len {
+        let mut byte = bytes.get(i).copied().unwrap_or(0);
+        if i + 1 == len && count % 8 != 0 {
+            byte &= 0xff << (8 - count % 8);
+        }
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
 /// Per-peer stats are only available while a torrent is live; an empty object
 /// keeps the UI code free of special cases.
 fn peer_stats_value(api: &Api, id: usize) -> serde_json::Value {
@@ -557,6 +598,14 @@ fn peer_stats_value(api: &Api, id: usize) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bitfield_is_written_as_whole_bytes_of_hex() {
+        assert_eq!(hex_bits(&[0b1110_1110, 0b1111_1111], 10), "eec0");
+        assert_eq!(hex_bits(&[0xff, 0x0f, 0xaa], 16), "ff0f");
+        assert_eq!(hex_bits(&[0xff], 12), "ff00");
+        assert_eq!(hex_bits(&[], 0), "");
+    }
 
     #[test]
     fn a_missing_interface_falls_back_to_loopback() {

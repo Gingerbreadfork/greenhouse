@@ -133,8 +133,10 @@ seeding or failed, and what asked for it: you, a feed, the watch folder or a
 magnet that waited for peers.
 
 **Watching.** A per-torrent inspector with progress, peers, per-file progress
-and trackers. A live throughput graph that starts when the first byte moves,
-not when the app launches.
+and trackers. Its piece map shows what has arrived, what is still to come and
+what belongs to files you skipped, and lights each piece up as it lands. A live
+throughput graph that starts when the first byte moves, not when the app
+launches.
 
 <img src="docs/screenshots/statistics.png" alt="The statistics page, with session totals and a throughput chart" width="100%">
 

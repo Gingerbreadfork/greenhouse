@@ -1,5 +1,6 @@
 import pkg from '../../package.json';
-import { activity, detail, feedStatus, filmFiles, session, settings, torrents } from '../fixtures';
+import { activity, detail, feedStatus, session, settings, torrents } from '../fixtures';
+import { detailOf, pickFiles, piecesOf } from '../pieces';
 
 const empty = typeof location !== 'undefined' && location.search.includes('empty');
 let live = empty ? [] : torrents.map((t) => ({ ...t }));
@@ -81,8 +82,19 @@ export async function invoke<T>(cmd: string, args?: Record<string, any>): Promis
       return live as T;
     case 'session_stats':
       return state.session as T;
-    case 'torrent_detail':
-      return { ...detail, id: args?.id, files: args?.id === 2 ? filmFiles : detail.files } as T;
+    case 'torrent_detail': {
+      const row = live.find((t) => t.id === args?.id);
+      if (!row) throw new Error('no such torrent');
+      return { ...detail, id: row.id, ...detailOf(row) } as T;
+    }
+    case 'torrent_pieces': {
+      const row = live.find((t) => t.id === args?.id);
+      if (!row) throw new Error('no such torrent');
+      return piecesOf(row) as T;
+    }
+    case 'set_file_selection':
+      pickFiles(args?.id, args?.indices ?? []);
+      return undefined as T;
     case 'stage_source':
       return {
         token: 'preview',

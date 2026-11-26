@@ -16,6 +16,7 @@ import type {
   Settings,
   StagedInfo,
   TorrentDetail,
+  TorrentPieces,
   TorrentRow,
   TrackerHealth
 } from './types';
@@ -33,6 +34,7 @@ export const api = {
   listTorrents: () => invoke<TorrentRow[]>('list_torrents'),
   sessionStats: () => invoke<SessionSummary>('session_stats'),
   torrentDetail: (id: number) => invoke<TorrentDetail>('torrent_detail', { id }),
+  torrentPieces: (id: number) => invoke<TorrentPieces>('torrent_pieces', { id }),
   torrentAction: (id: number, action: 'pause' | 'start' | 'forget' | 'delete') =>
     invoke<void>('torrent_action', { id, action }),
   setFileSelection: (id: number, indices: number[]) =>

@@ -283,6 +283,14 @@ pub fn torrent_detail(state: tauri::State<'_, AppState>, id: usize) -> CmdResult
 }
 
 #[tauri::command]
+pub fn torrent_pieces(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+) -> CmdResult<engine::TorrentPieces> {
+    engine::torrent_pieces(&state.api(), id).map_err(err)
+}
+
+#[tauri::command]
 pub async fn torrent_action(
     state: tauri::State<'_, AppState>,
     id: usize,
@@ -3509,6 +3517,127 @@ mod tests {
             set_file_selection(app.state(), id, vec![0]).await.unwrap();
             assert_eq!(size(&state), u64::from(length));
             assert!(set_file_selection(app.state(), id, vec![]).await.is_err());
+        });
+    }
+
+    /// The piece map says which pieces are on disk, paused or running.
+    #[test]
+    fn the_piece_map_marks_the_pieces_on_disk() {
+        const PIECE: usize = 16 * 1024;
+        tauri::async_runtime::block_on(async {
+            let app = test_app("piece-map", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+
+            // Ten pieces, the last one short, with two of them spoiled on disk.
+            let mut content: Vec<u8> = (0..10 * PIECE - 100).map(|i| (i % 251) as u8 + 1).collect();
+            let folder = root.join("seeded");
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("a.bin"), &content).unwrap();
+            let torrent = librqbit::create_torrent(
+                &folder,
+                librqbit::CreateTorrentOptions {
+                    name: None,
+                    trackers: vec![],
+                    piece_length: Some(PIECE as u32),
+                },
+                &librqbit::spawn_utils::BlockingSpawner::new(1),
+            )
+            .await
+            .unwrap()
+            .as_bytes()
+            .unwrap();
+            for lost in [3, 7] {
+                content[lost * PIECE..(lost + 1) * PIECE].fill(0);
+            }
+            std::fs::write(folder.join("a.bin"), &content).unwrap();
+
+            let added = state
+                .session()
+                .add_torrent(
+                    AddTorrent::from_bytes(torrent),
+                    Some(AddTorrentOptions {
+                        overwrite: true,
+                        paused: true,
+                        output_folder: Some(folder.to_string_lossy().into_owned()),
+                        ..Default::default()
+                    }),
+                )
+                .await
+                .unwrap();
+            let id = match added {
+                AddTorrentResponse::Added(id, handle) => {
+                    handle.wait_until_initialized().await.unwrap();
+                    id
+                }
+                _ => panic!("not added"),
+            };
+
+            let paused = torrent_pieces(app.state(), id).unwrap();
+            // 1110 1110 11, padded to whole bytes.
+            assert_eq!((paused.total, paused.have.as_deref()), (10, Some("eec0")));
+
+            torrent_action(app.state(), id, "start".into()).await.unwrap();
+            for _ in 0..100 {
+                if engine::collect_rows(&state.session())[0].state == "downloading" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            let running = torrent_pieces(app.state(), id).unwrap();
+            assert_eq!((running.total, running.have.as_deref()), (10, Some("eec0")));
+
+            assert!(torrent_pieces(app.state(), id + 1).is_err());
+        });
+    }
+
+    /// While a torrent's files are being checked there is no record of its
+    /// pieces yet, only how many there are.
+    #[test]
+    fn the_piece_map_is_blank_during_a_file_check() {
+        // Large enough that the check is still running when the map is read.
+        const PIECES: usize = 512;
+        tauri::async_runtime::block_on(async {
+            let app = test_app("piece-map-check", false).await;
+            let state = app.state::<AppState>();
+            let root = PathBuf::from(state.settings.read().download_dir.clone())
+                .parent()
+                .unwrap()
+                .to_path_buf();
+            let torrent = format!(
+                "d4:infod6:lengthi{}e4:name3:big12:piece lengthi1048576e6:pieces{}:{}ee",
+                PIECES << 20,
+                PIECES * 20,
+                "A".repeat(PIECES * 20)
+            );
+            let folder = root.join("checked");
+            std::fs::create_dir_all(&folder).unwrap();
+            let file = std::fs::File::create(folder.join("big")).unwrap();
+            file.set_len((PIECES << 20) as u64).unwrap();
+
+            let added = state
+                .session()
+                .add_torrent(
+                    AddTorrent::from_bytes(torrent.into_bytes()),
+                    Some(AddTorrentOptions {
+                        overwrite: true,
+                        output_folder: Some(folder.to_string_lossy().into_owned()),
+                        ..Default::default()
+                    }),
+                )
+                .await
+                .unwrap();
+            let AddTorrentResponse::Added(id, _) = added else {
+                panic!("not added");
+            };
+
+            let map = torrent_pieces(app.state(), id).unwrap();
+            assert_eq!((map.total, map.have), (PIECES as u32, None));
+            state.api().api_torrent_action_forget(id.into()).await.unwrap();
+            let _ = std::fs::remove_file(folder.join("big"));
         });
     }
 

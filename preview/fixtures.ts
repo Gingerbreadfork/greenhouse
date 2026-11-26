@@ -263,6 +263,32 @@ export const torrents: TorrentRow[] = [
     has_metadata: true,
     stopped: true,
     waiting_for_space: true
+  },
+  {
+    id: 11,
+    info_hash: '2468ace013579bdf2468ace013579bdf2468ace0',
+    name: 'Spring (2019) open movie trailer.webm',
+    state: 'downloading',
+    error: null,
+    progress: 0.35,
+    progress_bytes: 9.1 * MB,
+    total_bytes: 26 * MB,
+    uploaded_bytes: 0,
+    download_speed: 150 * 1024,
+    upload_speed: 0,
+    eta_seconds: 115,
+    peers_live: 2,
+    peers_connecting: 1,
+    peers_queued: 0,
+    peers_seen: 5,
+    finished: false,
+    output_folder: '/home/you/Downloads',
+    tracker_count: 14,
+    private: false,
+    ratio: 0,
+    has_metadata: true,
+    stopped: false,
+    waiting_for_space: false
   }
 ];
 

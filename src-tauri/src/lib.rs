@@ -155,6 +155,7 @@ pub fn run() {
             commands::list_torrents,
             commands::session_stats,
             commands::torrent_detail,
+            commands::torrent_pieces,
             commands::torrent_action,
             commands::set_file_selection,
             commands::play_file,
